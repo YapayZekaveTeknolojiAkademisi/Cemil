@@ -1,4 +1,4 @@
-# Slack App Kurulum ve Yetkilendirme Kılavuzu
+# Slack App Kurulum ve Yetkilendirme Kılavuzu - CEMIL
 
 Botun çalışması için Slack Developer Portal üzerinde aşağıdaki ayarların yapılması gerekmektedir.
 
