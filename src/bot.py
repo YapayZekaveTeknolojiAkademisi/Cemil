@@ -331,66 +331,47 @@ def handle_reindex_command(ack, body):
     
     asyncio.create_task(reindex_and_notify())
 
-# --- 5. Kullanıcı Kaydı ---
-@app.command("/kayit")
-def handle_register_command(ack, body):
-    """
-    Kullanıcı kaydı oluşturur/günceller.
-    GÜVENLİK: Kullanıcı sadece kendi Slack ID'si ile eşleşen kaydı güncelleyebilir.
-    """
+# --- 5. Profil Görüntüleme ---
+@app.command("/profilim")
+def handle_profile_command(ack, body):
+    """Kullanıcının kendi kayıtlı bilgilerini gösterir."""
     ack()
-    user_id = body["user_id"]  # Slack tarafından otomatik sağlanan, güvenilir ID
+    user_id = body["user_id"]
     channel_id = body["channel_id"]
-    text = body.get("text", "").strip()
-    
-    # Format: /kayit [Ad] [Soyad] [Departman] [Doğum Tarihi (YYYY-MM-DD)]
-    parts = text.split()
-    if len(parts) < 4:
-        chat_manager.post_ephemeral(
-            channel=channel_id,
-            user=user_id,
-            text="Kayıt formatında eksikler var gibi. 📝 Şöyle dener misin:\n`/kayit Ahmet Yılmaz Yazılım 1990-05-15`"
-        )
-        return
-    
-    first_name = parts[0]
-    surname = parts[1]
-    department = parts[2]
-    birthday = parts[3]
     
     try:
-        # GÜVENLİK: user_id Slack'ten geldiği için güvenilir
-        # Kullanıcı sadece kendi kaydını güncelleyebilir
-        existing = user_repo.get_by_slack_id(user_id)
-        if existing:
-            user_repo.update_by_slack_id(user_id, {
-                "first_name": first_name,
-                "surname": surname,
-                "full_name": f"{first_name} {surname}",
-                "birthday": birthday
-            })
-        else:
-            user_repo.create({
-                "slack_id": user_id,
-                "first_name": first_name,
-                "surname": surname,
-                "full_name": f"{first_name} {surname}",
-                "birthday": birthday
-            })
+        user_data = user_repo.get_by_slack_id(user_id)
+        
+        if not user_data:
+            chat_manager.post_ephemeral(
+                channel=channel_id,
+                user=user_id,
+                text="henüz sistemde kaydın bulunmuyor. � Lütfen yöneticinle iletişime geç."
+            )
+            return
+
+        # Profil Kartı Oluştur
+        text = (
+            f"👤 *KİMLİK KARTI*\n"
+            f"------------------\n"
+            f"*Ad Soyad:* {user_data.get('full_name', 'Bilinmiyor')}\n"
+            f"*Departman:* {user_data.get('department', 'Belirtilmemiş')}\n"
+            f"*Doğum Tarihi:* {user_data.get('birthday', 'Yok')}\n"
+            f"------------------"
+        )
         
         chat_manager.post_ephemeral(
             channel=channel_id,
             user=user_id,
-            text=f"✅ Kaydınız güncellendi!\n*Ad Soyad:* {first_name} {surname}\n*Departman:* {department}\n*Doğum Tarihi:* {birthday}"
+            text=text
         )
-        logger.info(f"[+] Kullanıcı kaydı: {first_name} {surname} ({user_id})")
         
     except Exception as e:
-        logger.error(f"[X] Kullanıcı kayıt hatası: {e}")
+        logger.error(f"[X] Profil görüntüleme hatası: {e}")
         chat_manager.post_ephemeral(
             channel=channel_id,
             user=user_id,
-            text="Kayıt defterine ulaşırken bir sorun yaşadım. 📝 Lütfen bilgilerini kontrol edip tekrar dener misin?"
+            text="Profil bilgilerine ulaşırken bir sorun yaşadım. 🤕"
         )
 
 # ============================================================================
@@ -503,7 +484,7 @@ if __name__ == "__main__":
                 "🗳️ *`/oylama`* - Hızlı anketler başlat (Admin).\n"
                 "📝 *`/geri-bildirim`* - Yönetime anonim mesaj gönder.\n"
                 "🧠 *`/sor`* - Dökümanlara ve bilgi küpüne soru sor.\n"
-                "👤 *`/kayit`* - Kullanıcı profilini oluştur veya güncelle.\n\n"
+                "👤 *`/profilim`* - Kayıtlı bilgilerini görüntüle.\n\n"
                 "Güzel bir gün dilerim! ✨"
             )
             
