@@ -50,6 +50,19 @@ class DatabaseClient:
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+
+                # Eşleşme Takip Tablosu (Matches)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS matches (
+                        id TEXT PRIMARY KEY,
+                        channel_id TEXT,
+                        user1_id TEXT,
+                        user2_id TEXT,
+                        status TEXT DEFAULT 'active',
+                        summary TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
                 conn.commit()
                 logger.debug("[i] Veritabanı tabloları kontrol edildi.")
         except sqlite3.Error as e:

@@ -1,18 +1,18 @@
 import logging
 from datetime import datetime, timedelta
 from typing import Callable, List, Dict, Any, Optional
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from src.core.logger import logger
 from src.core.exceptions import CemilBotError
 
 class CronClient:
     """
     Cemil Bot için merkezi zamanlanmış görev (Cron) yönetim sınıfı.
-    APScheduler BackgroundScheduler kullanarak işleri yönetir.
+    APScheduler AsyncIOScheduler kullanarak işleri yönetir.
     """
 
     def __init__(self):
-        self.scheduler = BackgroundScheduler()
+        self.scheduler = AsyncIOScheduler()
         self._is_running = False
 
     def start(self):
