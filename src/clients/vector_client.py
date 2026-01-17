@@ -52,12 +52,15 @@ class VectorClient(metaclass=SingletonMeta):
         threshold: L2 mesafesi için maksimum eşik. Bu değerden büyük (uzak) sonuçlar elenir.
         """
         if self.index is None or not self.documents:
+            logger.warning(f"[!] Vector search: İndeks veya döküman yok | Toplam döküman: {len(self.documents) if self.documents else 0}")
             return []
 
         query_embedding = self.model.encode([query])
         query_embedding = np.array(query_embedding).astype('float32')
 
-        distances, indices = self.index.search(query_embedding, top_k)
+        # Daha fazla sonuç al, sonra filtrele
+        search_k = min(top_k * 3, len(self.documents)) if self.documents else top_k
+        distances, indices = self.index.search(query_embedding, search_k)
         
         results = []
         for i, idx in enumerate(indices[0]):
@@ -69,7 +72,15 @@ class VectorClient(metaclass=SingletonMeta):
                     doc["score"] = distance
                     results.append(doc)
                 else:
-                    logger.debug(f"[i] Sonuç mesafe eşiğine takıldı: {distance} > {threshold}")
+                    logger.debug(f"[i] Sonuç mesafe eşiğine takıldı: {distance:.3f} > {threshold}")
+        
+        # En iyi sonuçları döndür (top_k kadar)
+        results = sorted(results, key=lambda x: x.get('score', float('inf')))[:top_k]
+        
+        if results:
+            logger.debug(f"[i] Vector search: {len(results)} sonuç bulundu (threshold: {threshold})")
+        else:
+            logger.debug(f"[!] Vector search: Hiç sonuç bulunamadı (threshold: {threshold}, sorgu: {query[:50]}...)")
         
         return results
 

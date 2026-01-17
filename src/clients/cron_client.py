@@ -1,7 +1,8 @@
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from typing import Callable, List, Dict, Any, Optional
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from src.core.logger import logger
 from src.core.exceptions import CemilBotError
 from src.core.singleton import SingletonMeta
@@ -9,11 +10,12 @@ from src.core.singleton import SingletonMeta
 class CronClient(metaclass=SingletonMeta):
     """
     Cemil Bot için merkezi zamanlanmış görev (Cron) yönetim sınıfı.
-    APScheduler AsyncIOScheduler kullanarak işleri yönetir.
+    BackgroundScheduler kullanarak işleri ayrı thread'lerde yönetir.
+    Async fonksiyonları otomatik olarak sarmalar.
     """
 
     def __init__(self):
-        self.scheduler = AsyncIOScheduler()
+        self.scheduler = BackgroundScheduler()
         self._is_running = False
 
     def start(self):
@@ -21,7 +23,7 @@ class CronClient(metaclass=SingletonMeta):
         if not self._is_running:
             self.scheduler.start()
             self._is_running = True
-            logger.info("[i] CronClient (Zamanlayıcı) başlatıldı.")
+            logger.info("[i] CronClient (BackgroundScheduler) başlatıldı.")
 
     def shutdown(self, wait: bool = True):
         """Zamanlayıcıyı kapatır."""
@@ -30,17 +32,29 @@ class CronClient(metaclass=SingletonMeta):
             self._is_running = False
             logger.info("[i] CronClient (Zamanlayıcı) kapatıldı.")
 
+    def _wrap_async(self, func: Callable, args: List):
+        """Async fonksiyonları senkron wrapper içine alır."""
+        if asyncio.iscoroutinefunction(func):
+            def wrapper(*a, **k):
+                try:
+                    asyncio.run(func(*a, **k))
+                except Exception as e:
+                    logger.error(f"[X] Async cron görevi hatası: {e}")
+            return wrapper, args
+        return func, args
+
     def add_cron_job(self, func: Callable, cron_expression: Dict[str, Any], job_id: Optional[str] = None, args: Optional[List] = None) -> str:
         """
         Düzenli bir cron görevi ekler.
-        cron_expression: {'hour': 10, 'minute': 0} gibi bir sözlük olmalıdır.
         """
         try:
+            wrapped_func, wrapped_args = self._wrap_async(func, args or [])
+            
             job = self.scheduler.add_job(
-                func,
+                wrapped_func,
                 'cron',
                 id=job_id,
-                args=args or [],
+                args=wrapped_args,
                 **cron_expression
             )
             logger.info(f"[+] Cron görevi eklendi: {job.id} ({cron_expression})")
@@ -52,7 +66,6 @@ class CronClient(metaclass=SingletonMeta):
     def add_once_job(self, func: Callable, run_date: Optional[datetime] = None, delay_minutes: Optional[int] = None, job_id: Optional[str] = None, args: Optional[List] = None) -> str:
         """
         Bir kez çalışacak bir görev ekler.
-        Ya run_date (datetime) ya da delay_minutes (int) verilmelidir.
         """
         if delay_minutes is not None:
             run_date = datetime.now() + timedelta(minutes=delay_minutes)
@@ -61,12 +74,14 @@ class CronClient(metaclass=SingletonMeta):
             raise CemilBotError("Birim zamanlı iş için run_date veya delay_minutes gereklidir.")
 
         try:
+            wrapped_func, wrapped_args = self._wrap_async(func, args or [])
+
             job = self.scheduler.add_job(
-                func,
+                wrapped_func,
                 'date',
                 id=job_id,
                 run_date=run_date,
-                args=args or []
+                args=wrapped_args
             )
             logger.info(f"[+] Tek seferlik görev planlandı: {job.id} (Çalışma: {run_date})")
             return job.id
@@ -92,7 +107,8 @@ class CronClient(metaclass=SingletonMeta):
             job_list.append({
                 "id": job.id,
                 "next_run_time": str(job.next_run_time),
-                "func": job.func.__name__
+                # Wrapper yüzünden orijinal fonksiyon ismini alamayabiliriz
+                "func": str(job.func)
             })
         logger.info(f"[i] Toplam {len(job_list)} aktif görev listelendi.")
         return job_list

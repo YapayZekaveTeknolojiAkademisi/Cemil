@@ -85,12 +85,18 @@ class ConversationManager:
             raise SlackClientError(str(e))
 
     def leave_channel(self, channel_id: str) -> bool:
-        """Kanaldan ayrılır (conversations.leave)."""
+        """Kanaldan veya grup DM'den ayrılır (conversations.leave)."""
         try:
             response = self.client.conversations_leave(channel=channel_id)
-            return response["ok"]
+            if response["ok"]:
+                logger.info(f"[+] Kanaldan ayrıldı: {channel_id}")
+                return True
+            else:
+                error = response.get("error", "Bilinmeyen hata")
+                logger.warning(f"[!] Kanaldan ayrılamadı: {channel_id} | Hata: {error}")
+                return False
         except Exception as e:
-            logger.error(f"[X] conversations.leave hatası: {e}")
+            logger.error(f"[X] conversations.leave hatası: {channel_id} | {e}")
             return False
 
     def archive_channel(self, channel_id: str) -> bool:
@@ -195,9 +201,16 @@ class ConversationManager:
         """DM veya grup DM'i kapatır (conversations.close)."""
         try:
             response = self.client.conversations_close(channel=channel_id)
-            return response["ok"]
+            if response["ok"]:
+                logger.info(f"[+] Konuşma kapatıldı: {channel_id}")
+                return True
+            else:
+                error = response.get("error", "Bilinmeyen hata")
+                logger.warning(f"[!] Konuşma kapatılamadı: {channel_id} | Hata: {error}")
+                # Bazı durumlarda (örneğin grup DM'ler) kapatılamayabilir
+                return False
         except Exception as e:
-            logger.error(f"[X] conversations.close hatası: {e}")
+            logger.error(f"[X] conversations.close hatası: {channel_id} | {e}")
             return False
 
     def mark_read(self, channel_id: str, ts: str) -> bool:

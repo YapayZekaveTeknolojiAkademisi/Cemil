@@ -51,8 +51,12 @@ from src.services import (
 
 load_dotenv()
 
-# Slack App Başlatma
-app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
+# Slack App Başlatma - Token kontrolü
+slack_bot_token = os.environ.get("SLACK_BOT_TOKEN")
+if not slack_bot_token:
+    raise ValueError("SLACK_BOT_TOKEN environment variable is required!")
+
+app = App(token=slack_bot_token)
 
 # ============================================================================
 # CLIENT İLKLENDİRME (Singleton Pattern)
@@ -137,23 +141,59 @@ def handle_coffee_command(ack, body):
     user_id = body["user_id"]
     channel_id = body["channel_id"]
     
+    # Kullanıcı bilgisini al
+    try:
+        user_data = user_repo.get_by_slack_id(user_id)
+        user_name = user_data.get('full_name', user_id) if user_data else user_id
+    except:
+        user_name = user_id
+    
+    logger.info(f"[>] /kahve komutu geldi | Kullanıcı: {user_name} ({user_id}) | Kanal: {channel_id}")
+    
     async def process_coffee_request():
         try:
-            response_msg = await coffee_service.request_coffee(user_id, channel_id)
+            response_msg = await coffee_service.request_coffee(user_id, channel_id, user_name)
             chat_manager.post_ephemeral(
                 channel=channel_id,
                 user=user_id,
                 text=response_msg
             )
         except Exception as e:
-            logger.error(f"[X] Kahve isteği hatası: {e}")
+            logger.error(f"[X] Kahve isteği hatası | Kullanıcı: {user_name} ({user_id}) | Hata: {e}")
             chat_manager.post_ephemeral(
                 channel=channel_id,
                 user=user_id,
                 text="Kahve makinesinde ufak bir arıza var sanırım ☕😅 Lütfen birazdan tekrar dene."
             )
     
-    asyncio.create_task(process_coffee_request())
+    asyncio.run(process_coffee_request())
+
+# --- Kahve Eşleşmesi Action Handler (Eski sistem uyumluluğu için) ---
+@app.action("join_coffee")
+def handle_join_coffee(ack, body):
+    """
+    Eski sistem uyumluluğu için join_coffee action handler.
+    Yeni sistemde kahve eşleşmesi otomatik bekleme havuzu ile çalışır.
+    """
+    ack()
+    user_id = body["user"]["id"]  # Tıklayan kişi
+    channel_id = body["channel"]["id"]
+    
+    # Kullanıcı bilgisini al
+    try:
+        user_data = user_repo.get_by_slack_id(user_id)
+        user_name = user_data.get('full_name', user_id) if user_data else user_id
+    except:
+        user_name = user_id
+    
+    logger.info(f"[>] join_coffee action tetiklendi | Kullanıcı: {user_name} ({user_id}) | Kanal: {channel_id}")
+    
+    # Yeni sistemde kahve eşleşmesi için /kahve komutunu kullanmasını söyle
+    chat_manager.post_ephemeral(
+        channel=channel_id,
+        user=user_id,
+        text="☕ Bu buton eski sistem için. Yeni kahve eşleşmesi için `/kahve` komutunu kullanabilirsiniz!"
+    )
 
 # --- 2. Oylama Sistemi ---
 @app.command("/oylama")
@@ -164,7 +204,17 @@ def handle_poll_command(ack, body):
     channel_id = body["channel_id"]
     text = body.get("text", "").strip()
     
+    # Kullanıcı bilgisini al
+    try:
+        user_data = user_repo.get_by_slack_id(user_id)
+        user_name = user_data.get('full_name', user_id) if user_data else user_id
+    except:
+        user_name = user_id
+    
+    logger.info(f"[>] /oylama komutu geldi | Kullanıcı: {user_name} ({user_id}) | Kanal: {channel_id} | Parametreler: {text[:50]}...")
+    
     if not is_admin(user_id):
+        logger.warning(f"[!] Yetkisiz oylama denemesi | Kullanıcı: {user_name} ({user_id})")
         chat_manager.post_ephemeral(
             channel=channel_id, 
             user=user_id, 
@@ -187,14 +237,14 @@ def handle_poll_command(ack, body):
         topic = content_parts[0].strip()
         options = [opt.strip() for opt in content_parts[1:]]
         
-        # Async servisi çağır
-        asyncio.create_task(
+        # Async servisi çağır - SYNC WRAPPER KULLANILIYOR
+        asyncio.run(
             voting_service.create_poll(
                 channel_id, topic, options, user_id, 
                 allow_multiple=False, duration_minutes=minutes
             )
         )
-        logger.info(f"[+] Oylama başlatıldı: {topic} ({minutes}dk)")
+        logger.info(f"[?] OYLAMA BAŞLATILDI | Kullanıcı: {user_name} ({user_id}) | Konu: {topic} | Süre: {minutes}dk | Seçenekler: {len(options)} adet")
         
     except ValueError as ve:
         chat_manager.post_ephemeral(
@@ -218,6 +268,13 @@ def handle_poll_vote(ack, body):
     value = body["actions"][0]["value"]
     channel_id = body["channel"]["id"]
     
+    # Kullanıcı bilgisini al
+    try:
+        user_data = user_repo.get_by_slack_id(user_id)
+        user_name = user_data.get('full_name', user_id) if user_data else user_id
+    except:
+        user_name = user_id
+    
     # value formatı: vote_{poll_id}_{option_index}
     parts = value.split("_")
     if len(parts) != 3:
@@ -226,7 +283,14 @@ def handle_poll_vote(ack, body):
     poll_id = parts[1]
     option_index = int(parts[2])
     
+    logger.info(f"[>] OY VERİLDİ | Kullanıcı: {user_name} ({user_id}) | Oylama ID: {poll_id} | Seçenek: {option_index}")
+    
     result = voting_service.cast_vote(poll_id, user_id, option_index)
+    
+    if result.get("success"):
+        logger.info(f"[+] OY KAYDEDİLDİ | Kullanıcı: {user_name} ({user_id}) | Oylama ID: {poll_id} | Seçenek: {option_index}")
+    else:
+        logger.warning(f"[!] OY KAYDEDİLEMEDİ | Kullanıcı: {user_name} ({user_id}) | Oylama ID: {poll_id} | Sebep: {result.get('message', 'Bilinmiyor')}")
     
     chat_manager.post_ephemeral(
         channel=channel_id,
@@ -242,6 +306,15 @@ def handle_feedback_command(ack, body):
     user_id = body["user_id"]
     channel_id = body["channel_id"]
     text = body.get("text", "").strip()
+    
+    # Kullanıcı bilgisini al
+    try:
+        user_data = user_repo.get_by_slack_id(user_id)
+        user_name = user_data.get('full_name', user_id) if user_data else user_id
+    except:
+        user_name = user_id
+    
+    logger.info(f"[>] /geri-bildirim komutu geldi | Kullanıcı: {user_name} ({user_id}) | Kanal: {channel_id}")
     
     if not text:
         chat_manager.post_ephemeral(
@@ -260,14 +333,14 @@ def handle_feedback_command(ack, body):
         category = parts[0]
         content = parts[1]
     
-    asyncio.create_task(feedback_service.submit_feedback(content, category))
+    asyncio.run(feedback_service.submit_feedback(content, category))
     
     chat_manager.post_ephemeral(
         channel=channel_id,
         user=user_id,
         text="✅ Geri bildiriminiz anonim olarak iletildi. Teşekkürler!"
     )
-    logger.info(f"[+] Anonim geri bildirim alındı (Kategori: {category})")
+    logger.info(f"[+] GERİ BİLDİRİM ALINDI | Kullanıcı: {user_name} ({user_id}) | Kategori: {category} | Uzunluk: {len(content)} karakter")
 
 # --- 4. Bilgi Küpü (RAG) ---
 @app.command("/sor")
@@ -277,6 +350,15 @@ def handle_ask_command(ack, body):
     user_id = body["user_id"]
     channel_id = body["channel_id"]
     question = body.get("text", "").strip()
+    
+    # Kullanıcı bilgisini al
+    try:
+        user_data = user_repo.get_by_slack_id(user_id)
+        user_name = user_data.get('full_name', user_id) if user_data else user_id
+    except:
+        user_name = user_id
+    
+    logger.info(f"[>] /sor komutu geldi | Kullanıcı: {user_name} ({user_id}) | Kanal: {channel_id} | Soru: {question[:100]}...")
     
     if not question:
         chat_manager.post_ephemeral(
@@ -294,12 +376,15 @@ def handle_ask_command(ack, body):
     
     async def ask_and_respond():
         answer = await knowledge_service.ask_question(question, user_id)
-        chat_manager.post_message(
+        logger.info(f"[+] SORU CEVAPLANDI | Kullanıcı: {user_name} ({user_id}) | Soru: {question[:50]}... | Cevap uzunluğu: {len(answer)} karakter")
+        # Cevabı sadece soran kişiye göster (ephemeral)
+        chat_manager.post_ephemeral(
             channel=channel_id,
-            text=f"<@{user_id}> sordu: *{question}*\n\n{answer}"
+            user=user_id,
+            text=f"*Soru:* {question}\n\n{answer}"
         )
     
-    asyncio.create_task(ask_and_respond())
+    asyncio.run(ask_and_respond())
 
 @app.command("/cemil-indeksle")
 def handle_reindex_command(ack, body):
@@ -308,7 +393,17 @@ def handle_reindex_command(ack, body):
     user_id = body["user_id"]
     channel_id = body["channel_id"]
     
+    # Kullanıcı bilgisini al
+    try:
+        user_data = user_repo.get_by_slack_id(user_id)
+        user_name = user_data.get('full_name', user_id) if user_data else user_id
+    except:
+        user_name = user_id
+    
+    logger.info(f"[>] /cemil-indeksle komutu geldi | Kullanıcı: {user_name} ({user_id}) | Kanal: {channel_id}")
+    
     if not is_admin(user_id):
+        logger.warning(f"[!] Yetkisiz indeksleme denemesi | Kullanıcı: {user_name} ({user_id})")
         chat_manager.post_ephemeral(
             channel=channel_id,
             user=user_id,
@@ -324,12 +419,13 @@ def handle_reindex_command(ack, body):
     
     async def reindex_and_notify():
         await knowledge_service.process_knowledge_base()
+        logger.info(f"[+] BİLGİ KÜPÜ YENİDEN İNDEKLENDİ | Kullanıcı: {user_name} ({user_id})")
         chat_manager.post_message(
             channel=channel_id,
             text=f"✅ <@{user_id}> Bilgi küpü güncellendi! Cemil artık en güncel dökümanları biliyor."
         )
     
-    asyncio.create_task(reindex_and_notify())
+    asyncio.run(reindex_and_notify())
 
 # --- 5. Profil Görüntüleme ---
 @app.command("/profilim")
@@ -338,6 +434,8 @@ def handle_profile_command(ack, body):
     ack()
     user_id = body["user_id"]
     channel_id = body["channel_id"]
+    
+    logger.info(f"[>] /profilim komutu geldi | Kullanıcı: {user_id} | Kanal: {channel_id}")
     
     try:
         user_data = user_repo.get_by_slack_id(user_id)
@@ -350,12 +448,24 @@ def handle_profile_command(ack, body):
             )
             return
 
-        # Profil Kartı Oluştur
+        # Profil Kartı Oluştur (orta isim varsa dahil et)
+        first_name = user_data.get('first_name', '')
+        middle_name = user_data.get('middle_name', '')
+        surname = user_data.get('surname', '')
+        
+        if middle_name:
+            display_name = f"{first_name} {middle_name} {surname}".strip()
+        else:
+            display_name = f"{first_name} {surname}".strip()
+        
+        if not display_name:
+            display_name = user_data.get('full_name', 'Bilinmiyor')
+        
         text = (
             f"👤 *KİMLİK KARTI*\n"
             f"------------------\n"
-            f"*Ad Soyad:* {user_data.get('full_name', 'Bilinmiyor')}\n"
-            f"*Departman:* {user_data.get('department', 'Belirtilmemiş')}\n"
+            f"*Ad Soyad:* {display_name}\n"
+            f"*Cohort:* {user_data.get('cohort', 'Belirtilmemiş')}\n"
             f"*Doğum Tarihi:* {user_data.get('birthday', 'Yok')}\n"
             f"------------------"
         )
@@ -365,9 +475,10 @@ def handle_profile_command(ack, body):
             user=user_id,
             text=text
         )
+        logger.info(f"[+] Profil görüntülendi | Kullanıcı: {user_data.get('full_name', user_id)} ({user_id}) | Cohort: {user_data.get('cohort', 'Yok')}")
         
     except Exception as e:
-        logger.error(f"[X] Profil görüntüleme hatası: {e}")
+        logger.error(f"[X] Profil görüntüleme hatası | Kullanıcı: {user_id} | Hata: {e}")
         chat_manager.post_ephemeral(
             channel=channel_id,
             user=user_id,
@@ -426,17 +537,28 @@ if __name__ == "__main__":
         print(f"\n[i] '{CSV_PATH}' dosyası bulunamadı. Şablon oluşturuluyor...")
         try:
             with open(CSV_PATH, 'w', encoding='utf-8') as f:
-                f.write("slack_id,first_name,surname,birthday,department\n")
-                f.write("U12345,Ahmet,Yilmaz,1990-01-01,Yazilim\n")
+                f.write("Slack ID,First Name,Surname,Full Name,Birthday,Cohort\n")
+                f.write("U12345,Ahmet,Yilmaz,Ahmet Yilmaz,01.01.1990,Yapay Zeka\n")
             print(f"[+] Şablon oluşturuldu: {CSV_PATH}")
-            print(f"[i] Kullanıcıları içeri aktarmak için bu dosyayı doldurup botu yeniden başlatabilirsiniz.")
-            input("Devam etmek için ENTER'a basın...")
+            print(f"[i] Not: Şablon içinde örnek veri bulunmaktadır.")
+            choice = input("Bu şablonu şimdi kullanmak ister misiniz? (e/h): ").lower().strip()
+            
+            if choice == 'e':
+                print("[i] Veriler işleniyor...")
+                try:
+                    count = user_repo.import_from_csv(CSV_PATH)
+                    print(f"[+] Başarılı! {count} kullanıcı eklendi.")
+                except Exception as e:
+                    logger.error(f"[X] Import hatası: {e}")
+                    print("Hata oluştu, logları kontrol edin.")
+            else:
+                print("[i] Şablon atlandı. Dosyayı doldurup botu yeniden başlattığınızda kullanabilirsiniz.")
         except Exception as e:
             logger.error(f"Şablon oluşturma hatası: {e}")
     else:
-        # Dosya var, import onayı iste
+        # Dosya var, kullanıp kullanmayacağını sor
         print(f"\n[?] '{CSV_PATH}' dosyası bulundu.")
-        choice = input("Bu dosyadaki verilerle 'users' tablosunu SIFIRLAYIP yeniden oluşturmak ister misiniz? (e/h): ").lower().strip()
+        choice = input("Bu CSV dosyasındaki verileri kullanmak ister misiniz? (e/h): ").lower().strip()
         
         if choice == 'e':
             print("[i] Veriler işleniyor...")
@@ -447,7 +569,7 @@ if __name__ == "__main__":
                 logger.error(f"[X] Import hatası: {e}")
                 print("Hata oluştu, logları kontrol edin.")
         else:
-            print("[i] İşlem atlandı, mevcut veritabanı ile devam ediliyor.")
+            print("[i] CSV dosyası atlandı, mevcut veritabanı ile devam ediliyor.")
     # -------------------------------------
     
     # 2. Cron Başlatma
@@ -458,9 +580,31 @@ if __name__ == "__main__":
     logger.info("[>] Günlük doğum günü kontrolü planlanıyor...")
     birthday_service.schedule_daily_check(hour=9, minute=0)
     
-    # 4. RAG İndeksleme
-    logger.info("[>] Bilgi Küpü indeksleniyor...")
-    asyncio.run(knowledge_service.process_knowledge_base())
+    # 4. Vektör Veritabanı Kontrolü
+    VECTOR_INDEX_PATH = "data/vector_store.index"
+    VECTOR_PKL_PATH = "data/vector_store.pkl"
+    
+    vector_index_exists = os.path.exists(VECTOR_INDEX_PATH) and os.path.exists(VECTOR_PKL_PATH)
+    
+    if vector_index_exists:
+        # Mevcut veriler var
+        print(f"\n[?] Vektör veritabanı bulundu (mevcut veriler: {len(vector_client.documents) if vector_client.documents else 0} parça).")
+        choice = input("Vektör veritabanını yeniden oluşturmak ister misiniz? (e/h): ").lower().strip()
+        
+        if choice == 'e':
+            print("[i] Vektör veritabanı yeniden oluşturuluyor...")
+            logger.info("[>] Bilgi Küpü indeksleniyor...")
+            asyncio.run(knowledge_service.process_knowledge_base())
+            print("[+] Vektör veritabanı başarıyla güncellendi.")
+        else:
+            print("[i] Mevcut vektör veritabanı kullanılıyor.")
+            logger.info("[i] Mevcut vektör veritabanı yüklendi.")
+    else:
+        # Vektör veritabanı yok, oluştur
+        print(f"\n[i] Vektör veritabanı bulunamadı. Oluşturuluyor...")
+        logger.info("[>] Bilgi Küpü indeksleniyor...")
+        asyncio.run(knowledge_service.process_knowledge_base())
+        print("[+] Vektör veritabanı başarıyla oluşturuldu.")
     
     # 5. Slack Socket Mode Başlatma
     app_token = os.environ.get("SLACK_APP_TOKEN")
@@ -470,36 +614,58 @@ if __name__ == "__main__":
     
     logger.info("[>] Slack Socket Mode başlatılıyor...")
     
-    # Başlangıç mesajı (isteğe bağlı)
-    # Başlangıç mesajı (isteğe bağlı)
+    # Başlangıç Mesajı Kontrolü
     startup_channel = os.environ.get("SLACK_STARTUP_CHANNEL")
     github_repo = os.environ.get("GITHUB_REPO")
     
     if startup_channel:
-        try:
-            startup_text = (
-                "👋 *Merhabalar! Ben Cemil, göreve hazırım!* ☀️\n\n"
-                "Topluluk etkileşimini artırmak için buradayım. İşte güncel yeteneklerim:\n\n"
-                "☕ *`/kahve`* - Kahve molası eşleşmesi için havuza katıl.\n"
-                "🗳️ *`/oylama`* - Hızlı anketler başlat (Admin).\n"
-                "📝 *`/geri-bildirim`* - Yönetime anonim mesaj gönder.\n"
-                "🧠 *`/sor`* - Dökümanlara ve bilgi küpüne soru sor.\n"
-                "👤 *`/profilim`* - Kayıtlı bilgilerini görüntüle.\n\n"
-                "Güzel bir gün dilerim! ✨"
-            )
-            
-            if github_repo and "SİZİN_KULLANICI_ADINIZ" not in github_repo:
-                startup_text += f"\n\n📚 *Kaynaklar:*\n"
-                startup_text += f"• <{github_repo}/blob/main/README.md|Kullanım Kılavuzu>\n"
-                startup_text += f"• <{github_repo}/blob/main/CHANGELOG.md|Neler Yeni?>\n"
-                startup_text += f"• <{github_repo}/blob/main/CONTRIBUTING.md|Katkıda Bulun>"
+        print(f"\n[?] Başlangıç kanalı bulundu: {startup_channel}")
+        choice = input("Başlangıç mesajı (welcome) gönderilsin mi? (e/h): ").lower().strip()
+        
+        if choice == 'e':
+            try:
+                startup_text = (
+                    "👋 *Merhabalar! Ben Cemil, göreve hazırım!* ☀️\n\n"
+                    "Topluluk etkileşimini artırmak için buradayım. İşte güncel yeteneklerim:\n\n"
+                    "☕ *`/kahve`* - Kahve molası eşleşmesi için havuza katıl.\n"
+                    "🗳️ *`/oylama`* - Hızlı anketler başlat (Admin).\n"
+                    "📝 *`/geri-bildirim`* - Yönetime anonim mesaj gönder.\n"
+                    "🧠 *`/sor`* - Dökümanlara ve bilgi küpüne soru sor.\n"
+                    "👤 *`/profilim`* - Kayıtlı bilgilerini görüntüle.\n\n"
+                    "Güzel bir gün dilerim! ✨"
+                )
+                
+                if github_repo and "SİZİN_KULLANICI_ADINIZ" not in github_repo:
+                    startup_text += f"\n\n📚 *Kaynaklar:*\n"
+                    startup_text += f"• <{github_repo}/blob/main/README.md|Kullanım Kılavuzu>\n"
+                    startup_text += f"• <{github_repo}/blob/main/CHANGELOG.md|Neler Yeni?>\n"
+                    startup_text += f"• <{github_repo}/blob/main/CONTRIBUTING.md|Katkıda Bulun>"
 
-            chat_manager.post_message(
-                channel=startup_channel,
-                text=startup_text
-            )
-        except Exception as e:
-            logger.error(f"[X] Başlangıç mesajı gönderilemedi: {e}")
+                startup_blocks = [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": startup_text + "\n<!channel>"
+                        }
+                    }
+                ]
+
+                chat_manager.post_message(
+                    channel=startup_channel,
+                    text=startup_text,
+                    blocks=startup_blocks
+                )
+                logger.info(f"[+] Başlangıç mesajı gönderildi: {startup_channel}")
+                print(f"[+] Başlangıç mesajı gönderildi: {startup_channel}")
+            except Exception as e:
+                logger.error(f"[X] Başlangıç mesajı gönderilemedi: {e}")
+                print(f"[X] Başlangıç mesajı gönderilemedi: {e}")
+        else:
+            print("[i] Başlangıç mesajı atlandı.")
+            logger.info("[i] Başlangıç mesajı kullanıcı tarafından atlandı.")
+    else:
+        print("[i] SLACK_STARTUP_CHANNEL tanımlı değil, başlangıç mesajı gönderilmeyecek.")
     
     print("\n" + "="*60)
     print("           BOT HAZIR - BAĞLANTI KURULUYOR")

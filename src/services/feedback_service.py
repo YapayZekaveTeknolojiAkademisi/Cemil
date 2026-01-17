@@ -70,7 +70,7 @@ class FeedbackService:
                     f"İyi çalışmalar,\nCemil Bot"
                 )
                 self.smtp.send_email(
-                    to_email=self.admin_email,
+                    to_emails=self.admin_email,
                     subject=subject,
                     body=email_body
                 )

@@ -82,11 +82,13 @@ class KnowledgeService:
     async def ask_question(self, question: str, user_id: str = "unknown") -> str:
         """Kullanıcının sorusunu dökümanlara göre yanıtlar."""
         try:
+            logger.info(f"[>] Soru işleniyor | Kullanıcı: {user_id} | Soru: {question}")
+            
             # 1. Benzer metin parçalarını bul (threshold ile filtrele)
             context_docs = self.model_search_context(question)
             
             if not context_docs:
-                logger.info(f"[i] Soru için dökümanlarda eşleşme bulunamadı: {question}")
+                logger.warning(f"[!] Soru için dökümanlarda eşleşme bulunamadı | Soru: {question} | Kullanıcı: {user_id}")
                 return "Üzgünüm, bilgi küpümde bu soruyla eşleşen herhangi bir döküman veya bilgi bulunamadı. 😔"
 
             # 2. Bağlamı (Context) hazırla
@@ -136,4 +138,20 @@ class KnowledgeService:
 
     def model_search_context(self, question: str) -> List[Dict]:
         """Vektör veritabanından bağlamı çeker."""
-        return self.vector.search(question, top_k=4, threshold=0.6)
+        # Threshold'u artırdık: 0.6 çok katıydı, 1.5 daha esnek eşleşmeler sağlar
+        # L2 mesafesi için: küçük mesafe = benzer, büyük mesafe = farklı
+        results = self.vector.search(question, top_k=5, threshold=1.5)
+        
+        if results:
+            logger.info(f"[i] Vector search sonucu: {len(results)} eşleşme bulundu | Soru: {question[:50]}...")
+            # İlk sonucun skorunu logla
+            if results[0].get('score'):
+                logger.info(f"[i] En iyi eşleşme skoru: {results[0]['score']:.3f}")
+        else:
+            logger.warning(f"[!] Vector search sonuç vermedi | Soru: {question[:50]}... | Threshold: 1.5")
+            # Threshold'u daha da artırarak tekrar dene
+            results = self.vector.search(question, top_k=3, threshold=2.5)
+            if results:
+                logger.info(f"[i] Daha esnek arama ile {len(results)} eşleşme bulundu")
+        
+        return results
