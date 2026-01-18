@@ -98,9 +98,15 @@ class KnowledgeService:
             context_parts = []
             for i, doc in enumerate(context_docs, 1):
                 source = doc['metadata'].get('source', 'Bilinmiyor')
-                score = doc.get('score', 'N/A')
+                score = doc.get('score')
+                # Score formatını düzelt
+                if isinstance(score, float):
+                    score_str = f"{score:.3f}"
+                else:
+                    score_str = "N/A"
+                
                 context_parts.append(
-                    f"[Kaynak {i}: {source} | Benzerlik: {score:.3f if isinstance(score, float) else score}]\n"
+                    f"[Kaynak {i}: {source} | Benzerlik: {score_str}]\n"
                     f"{doc['text']}"
                 )
             context_text = "\n\n---\n\n".join(context_parts)
