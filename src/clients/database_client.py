@@ -356,9 +356,11 @@ class DatabaseClient(metaclass=SingletonMeta):
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (theme_id, name, desc, icon, diff_range, is_active))
             
-            # Projeler (AI Chatbot)
+            # Projeler
             import json
-            ai_chatbot_projects = [
+            
+            all_projects = [
+                # AI Chatbot - Intermediate
                 {
                     "id": "proj_edu_assistant",
                     "theme": "AI Chatbot",
@@ -393,10 +395,172 @@ class DatabaseClient(metaclass=SingletonMeta):
                     "estimated_hours": 48,
                     "min_team_size": 2,
                     "max_team_size": 5
+                },
+                # AI Chatbot - Beginner
+                {
+                    "id": "proj_simple_greeting_bot",
+                    "theme": "AI Chatbot",
+                    "name": "Basit Karşılama Botu",
+                    "description": "Kullanıcıları karşılayan, basit sorulara yanıt veren chatbot",
+                    "objectives": json.dumps(["Basit prompt yazma", "5 örnek Q&A", "Test ve düzeltme"]),
+                    "deliverables": json.dumps(["prompt", "qa_examples", "test_results"]),
+                    "tasks": json.dumps([
+                        {"title": "Basit Prompt", "description": "Karşılama prompt'u yaz", "estimated_hours": 4},
+                        {"title": "Q&A Örnekleri", "description": "5 soru-cevap hazırla", "estimated_hours": 4},
+                        {"title": "Test", "description": "Botu test et ve düzelt", "estimated_hours": 4}
+                    ]),
+                    "difficulty_level": "beginner",
+                    "estimated_hours": 24,
+                    "min_team_size": 2,
+                    "max_team_size": 3
+                },
+                {
+                    "id": "proj_weather_bot",
+                    "theme": "AI Chatbot",
+                    "name": "Hava Durumu Botu",
+                    "description": "Hava durumu bilgisi veren basit chatbot",
+                    "objectives": json.dumps(["Hava durumu prompt'u", "Şehir bazlı sorgu akışı", "Örnek konuşmalar"]),
+                    "deliverables": json.dumps(["prompt", "flow_diagram", "sample_conversations"]),
+                    "tasks": json.dumps([
+                        {"title": "Hava Durumu Prompt'u", "description": "Hava durumu için prompt yaz", "estimated_hours": 4},
+                        {"title": "Şehir Sorgu Akışı", "description": "Şehir bazlı sorgu akışını tasarla", "estimated_hours": 4},
+                        {"title": "Örnek Konuşmalar", "description": "Farklı şehirler için örnekler", "estimated_hours": 4}
+                    ]),
+                    "difficulty_level": "beginner",
+                    "estimated_hours": 24,
+                    "min_team_size": 2,
+                    "max_team_size": 3
+                },
+                # Web App - Beginner
+                {
+                    "id": "proj_personal_notebook",
+                    "theme": "Web App",
+                    "name": "Kişisel Not Defteri",
+                    "description": "Basit not ekleme, listeleme, silme uygulaması",
+                    "objectives": json.dumps(["UI tasarımı", "CRUD işlemleri", "Local storage entegrasyonu", "Test"]),
+                    "deliverables": json.dumps(["html_css_js_files", "working_demo", "documentation"]),
+                    "tasks": json.dumps([
+                        {"title": "UI Tasarımı", "description": "Basit arayüz tasarla", "estimated_hours": 6},
+                        {"title": "CRUD İşlemleri", "description": "Not ekleme, listeleme, silme", "estimated_hours": 8},
+                        {"title": "Local Storage", "description": "Notları kaydetme", "estimated_hours": 4},
+                        {"title": "Test", "description": "Uygulamayı test et", "estimated_hours": 4}
+                    ]),
+                    "difficulty_level": "beginner",
+                    "estimated_hours": 36,
+                    "min_team_size": 2,
+                    "max_team_size": 4
+                },
+                {
+                    "id": "proj_simple_calculator",
+                    "theme": "Web App",
+                    "name": "Basit Hesap Makinesi",
+                    "description": "Web tabanlı hesap makinesi uygulaması",
+                    "objectives": json.dumps(["UI tasarımı", "Matematik işlemleri", "Hata yönetimi"]),
+                    "deliverables": json.dumps(["calculator_html", "working_calculator", "test_cases"]),
+                    "tasks": json.dumps([
+                        {"title": "UI Tasarımı", "description": "Hesap makinesi arayüzü", "estimated_hours": 4},
+                        {"title": "Matematik İşlemleri", "description": "Toplama, çıkarma, çarpma, bölme", "estimated_hours": 6},
+                        {"title": "Hata Yönetimi", "description": "Sıfıra bölme gibi hataları yakala", "estimated_hours": 4}
+                    ]),
+                    "difficulty_level": "beginner",
+                    "estimated_hours": 24,
+                    "min_team_size": 2,
+                    "max_team_size": 3
+                },
+                # Data Analysis - Beginner
+                {
+                    "id": "proj_simple_data_viz",
+                    "theme": "Data Analysis",
+                    "name": "Basit Veri Görselleştirme",
+                    "description": "CSV dosyasından veri okuyup grafik oluşturma",
+                    "objectives": json.dumps(["CSV okuma", "Basit istatistikler", "Grafik oluşturma", "Rapor hazırlama"]),
+                    "deliverables": json.dumps(["python_script", "sample_graphs", "analysis_report"]),
+                    "tasks": json.dumps([
+                        {"title": "CSV Okuma", "description": "CSV dosyasını oku ve parse et", "estimated_hours": 6},
+                        {"title": "Basit İstatistikler", "description": "Ortalama, min, max hesapla", "estimated_hours": 6},
+                        {"title": "Grafik Oluşturma", "description": "Matplotlib ile grafik çiz", "estimated_hours": 8},
+                        {"title": "Rapor Hazırlama", "description": "Analiz raporu yaz", "estimated_hours": 4}
+                    ]),
+                    "difficulty_level": "beginner",
+                    "estimated_hours": 36,
+                    "min_team_size": 2,
+                    "max_team_size": 4
+                },
+                {
+                    "id": "proj_survey_analysis",
+                    "theme": "Data Analysis",
+                    "name": "Basit Anket Analizi",
+                    "description": "Anket sonuçlarını analiz eden basit sistem",
+                    "objectives": json.dumps(["Veri toplama planı", "Basit analiz", "Görselleştirme"]),
+                    "deliverables": json.dumps(["analysis_script", "charts", "summary_report"]),
+                    "tasks": json.dumps([
+                        {"title": "Veri Toplama Planı", "description": "Anket verilerini organize et", "estimated_hours": 4},
+                        {"title": "Basit Analiz", "description": "Yüzdelik, frekans hesapla", "estimated_hours": 6},
+                        {"title": "Görselleştirme", "description": "Pasta ve bar grafikleri çiz", "estimated_hours": 6}
+                    ]),
+                    "difficulty_level": "beginner",
+                    "estimated_hours": 24,
+                    "min_team_size": 2,
+                    "max_team_size": 3
+                },
+                # Mobile App - Beginner
+                {
+                    "id": "proj_simple_todo",
+                    "theme": "Mobile App",
+                    "name": "Basit Todo List",
+                    "description": "Mobil todo list uygulaması (prototip)",
+                    "objectives": json.dumps(["UI tasarımı", "Liste işlemleri", "Local storage", "Test"]),
+                    "deliverables": json.dumps(["app_mockup", "working_prototype", "documentation"]),
+                    "tasks": json.dumps([
+                        {"title": "UI Tasarımı", "description": "Todo list arayüzü tasarla", "estimated_hours": 6},
+                        {"title": "Liste İşlemleri", "description": "Ekle, sil, işaretle", "estimated_hours": 8},
+                        {"title": "Local Storage", "description": "Verileri kaydet", "estimated_hours": 4},
+                        {"title": "Test", "description": "Uygulamayı test et", "estimated_hours": 4}
+                    ]),
+                    "difficulty_level": "beginner",
+                    "estimated_hours": 36,
+                    "min_team_size": 2,
+                    "max_team_size": 4
+                },
+                # Automation - Beginner
+                {
+                    "id": "proj_file_organizer",
+                    "theme": "Automation",
+                    "name": "Dosya Organizasyon Scripti",
+                    "description": "Klasördeki dosyaları türe göre organize eden script",
+                    "objectives": json.dumps(["Dosya okuma", "Klasör oluşturma", "Dosya taşıma", "Test"]),
+                    "deliverables": json.dumps(["python_script", "usage_guide", "test_results"]),
+                    "tasks": json.dumps([
+                        {"title": "Dosya Okuma", "description": "Klasördeki dosyaları listele", "estimated_hours": 4},
+                        {"title": "Klasör Oluşturma", "description": "Dosya türüne göre klasör oluştur", "estimated_hours": 4},
+                        {"title": "Dosya Taşıma", "description": "Dosyaları ilgili klasöre taşı", "estimated_hours": 4},
+                        {"title": "Test", "description": "Scripti test et", "estimated_hours": 4}
+                    ]),
+                    "difficulty_level": "beginner",
+                    "estimated_hours": 24,
+                    "min_team_size": 2,
+                    "max_team_size": 3
+                },
+                {
+                    "id": "proj_email_template",
+                    "theme": "Automation",
+                    "name": "E-posta Şablon Oluşturucu",
+                    "description": "E-posta şablonları oluşturan basit sistem",
+                    "objectives": json.dumps(["Şablon tasarımı", "Değişken sistemi", "Test"]),
+                    "deliverables": json.dumps(["template_files", "usage_guide", "examples"]),
+                    "tasks": json.dumps([
+                        {"title": "Şablon Tasarımı", "description": "3 farklı e-posta şablonu", "estimated_hours": 6},
+                        {"title": "Değişken Sistemi", "description": "İsim, tarih gibi değişkenler", "estimated_hours": 4},
+                        {"title": "Test", "description": "Şablonları test et", "estimated_hours": 4}
+                    ]),
+                    "difficulty_level": "beginner",
+                    "estimated_hours": 24,
+                    "min_team_size": 2,
+                    "max_team_size": 3
                 }
             ]
             
-            for project in ai_chatbot_projects:
+            for project in all_projects:
                 cursor.execute("""
                     INSERT OR IGNORE INTO challenge_projects 
                     (id, theme, name, description, objectives, deliverables, tasks, difficulty_level, estimated_hours, min_team_size, max_team_size)
