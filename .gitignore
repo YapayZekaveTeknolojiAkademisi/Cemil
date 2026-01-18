@@ -64,3 +64,12 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+.knowledge_base/
+.data/
+.logs/
+.venv/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
