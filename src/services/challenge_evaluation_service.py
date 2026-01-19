@@ -177,6 +177,8 @@ class ChallengeEvaluationService:
 
             # İlk kişi ise kanal oluştur
             eval_channel_id = evaluation.get("evaluation_channel_id")
+            is_new_channel = False
+            welcome_blocks = None
             if evaluator_count == 0:
                 challenge = self.hub_repo.get(evaluation["challenge_hub_id"])
                 if not challenge:
@@ -202,7 +204,7 @@ class ChallengeEvaluationService:
                         "status": "evaluating"
                     })
                     
-                    # Açılış mesajı gönder
+                    # Açılış mesajını daha sonra (bot kanala davet edildikten sonra) göndermek için sakla
                     welcome_blocks = [
                         {
                             "type": "header",
@@ -227,12 +229,7 @@ class ChallengeEvaluationService:
                             }
                         }
                     ]
-                    
-                    self.chat.post_message(
-                        channel=eval_channel_id,
-                        text="📊 Challenge Değerlendirme",
-                        blocks=welcome_blocks
-                    )
+                    is_new_channel = True
 
                     # 48 saat sonra otomatik kapatma görevi planla
                     self.cron.add_once_job(
@@ -258,6 +255,7 @@ class ChallengeEvaluationService:
                 }
 
             try:
+                # Kullanıcıyı (ve ConversationManager içindeki mantıkla botu) kanala davet et
                 self.conv.invite_users(eval_channel_id, [user_id])
             except Exception as e:
                 logger.warning(f"[!] Kullanıcı kanala davet edilemedi: {e}")
@@ -269,6 +267,17 @@ class ChallengeEvaluationService:
                 "evaluation_id": evaluation_id,
                 "user_id": user_id
             })
+
+            # Yeni kanal oluşturulduysa, açılış mesajını şimdi gönder (bot artık kanalda)
+            if is_new_channel and welcome_blocks:
+                try:
+                    self.chat.post_message(
+                        channel=eval_channel_id,
+                        text="📊 Challenge Değerlendirme",
+                        blocks=welcome_blocks
+                    )
+                except Exception as e:
+                    logger.warning(f"[!] Değerlendirme açılış mesajı gönderilemedi: {e}")
 
             logger.info(f"[+] Değerlendirici eklendi: {user_id} | Evaluation: {evaluation_id}")
 
