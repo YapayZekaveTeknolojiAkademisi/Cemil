@@ -12,7 +12,8 @@ from src.commands import ChatManager, ConversationManager
 from src.repositories import (
     ChallengeEvaluationRepository,
     ChallengeEvaluatorRepository,
-    ChallengeHubRepository
+    ChallengeHubRepository,
+    ChallengeParticipantRepository
 )
 from src.clients import CronClient
 
@@ -27,6 +28,7 @@ class ChallengeEvaluationService:
         evaluation_repo: ChallengeEvaluationRepository,
         evaluator_repo: ChallengeEvaluatorRepository,
         hub_repo: ChallengeHubRepository,
+        participant_repo: ChallengeParticipantRepository,
         cron_client: CronClient
     ):
         self.chat = chat_manager
@@ -34,6 +36,7 @@ class ChallengeEvaluationService:
         self.evaluation_repo = evaluation_repo
         self.evaluator_repo = evaluator_repo
         self.hub_repo = hub_repo
+        self.participant_repo = participant_repo
         self.cron = cron_client
 
     async def start_evaluation(

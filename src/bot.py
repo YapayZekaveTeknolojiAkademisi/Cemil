@@ -171,7 +171,7 @@ challenge_enhancement_service = ChallengeEnhancementService(
 challenge_evaluation_service = ChallengeEvaluationService(
     chat_manager, conv_manager,
     challenge_evaluation_repo, challenge_evaluator_repo,
-    challenge_hub_repo, cron_client
+    challenge_hub_repo, challenge_participant_repo, cron_client
 )
 challenge_hub_service = ChallengeHubService(
     chat_manager, conv_manager, user_manager,
