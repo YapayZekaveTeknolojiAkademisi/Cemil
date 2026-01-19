@@ -73,6 +73,27 @@ class HelpService:
             help_id: Oluşturulan yardım isteğinin ID'si
         """
         try:
+            # 0. Kullanıcıyı users tablosunda garanti altına al (foreign key için)
+            try:
+                user_record = self.user_repo.get_by_slack_id(requester_id)
+                if not user_record:
+                    # Slack'ten gerçek isim bilgisini almaya çalış
+                    full_name = requester_id
+                    try:
+                        user_info = self.user_manager.get_user_info(requester_id)
+                        full_name = user_info.get("real_name") or user_info.get("profile", {}).get("real_name") or requester_id
+                    except Exception:
+                        # Slack API'den bilgi alınamazsa, sadece Slack ID ile devam et
+                        full_name = requester_id
+                    
+                    self.user_repo.create({
+                        "slack_id": requester_id,
+                        "full_name": full_name
+                    })
+                    logger.info(f"[i] HelpService: Kullanıcı users tablosuna eklendi: {requester_id} ({full_name})")
+            except Exception as user_err:
+                logger.warning(f"[!] HelpService: Kullanıcı kontrol/ekleme hatası: {user_err}")
+            
             # 1. Veritabanına kaydet
             help_id = self.repo.create({
                 "requester_id": requester_id,
