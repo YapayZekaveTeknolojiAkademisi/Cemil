@@ -63,10 +63,12 @@ class ChallengeHubService:
         self,
         creator_id: str,
         team_size: int,
-        channel_id: Optional[str] = None
+        channel_id: Optional[str] = None,
+        theme: Optional[str] = None  # Yeni: Kullanıcının seçtiği tema
     ) -> Dict[str, Any]:
         """
-        Yeni challenge başlatır - Sadece kişi sayısı, tema ve proje random seçilir.
+        Yeni challenge başlatır.
+        theme: Seçilen tema adı. None ise takım dolunca random seçilir.
         """
         try:
             # 0. Kullanıcının users tablosunda olup olmadığını kontrol et (foreign key için gerekli)
@@ -145,7 +147,7 @@ class ChallengeHubService:
             hub_data = {
                 "id": challenge_id,
                 "creator_id": creator_id,
-                "theme": "TBD",  # Takım dolunca random seçilecek
+                "theme": theme if theme else "TBD",  # Seçilen tema veya TBD
                 "team_size": team_size,
                 "status": "recruiting",
                 "deadline_hours": 0,  # Proje seçilince DB'den gelecek
@@ -468,21 +470,28 @@ class ChallengeHubService:
                 logger.warning(f"[!] Challenge zaten aktif: {challenge_id}")
                 return
 
-            # 1. Random tema seç
-            if not self.db_client:
-                # Eğer db_client yoksa, mevcut theme_repo'yu kullan
-                active_themes = self.theme_repo.get_active_themes()
+            # 1. Tema belirleme: Önceden seçilmişse onu kullan, değilse random seç
+            existing_theme = challenge.get("theme")
+            
+            if existing_theme and existing_theme != "TBD":
+                # Tema zaten seçilmiş, onu kullan
+                theme_name = existing_theme
+                logger.info(f"[i] Önceden seçilmiş tema kullanılıyor: {theme_name}")
             else:
-                theme_repo = ChallengeThemeRepository(self.db_client)
-                active_themes = theme_repo.get_active_themes()
-            
-            if not active_themes:
-                logger.error("[X] Aktif tema bulunamadı")
-                raise ValueError("Aktif tema bulunamadı")
-            
-            selected_theme = random.choice(active_themes)
-            theme_name = selected_theme["name"]
-            logger.info(f"[i] Tema seçildi: {theme_name}")
+                # Random tema seç
+                if not self.db_client:
+                    active_themes = self.theme_repo.get_active_themes()
+                else:
+                    theme_repo = ChallengeThemeRepository(self.db_client)
+                    active_themes = theme_repo.get_active_themes()
+                
+                if not active_themes:
+                    logger.error("[X] Aktif tema bulunamadı")
+                    raise ValueError("Aktif tema bulunamadı")
+                
+                selected_theme = random.choice(active_themes)
+                theme_name = selected_theme["name"]
+                logger.info(f"[i] Random tema seçildi: {theme_name}")
             
             # 2. Random proje seç (tema bazlı)
             project = self.project_repo.get_random_project(theme_name)

@@ -156,3 +156,36 @@ def setup_challenge_evaluation_handlers(
             
         except Exception as e:
             logger.error(f"[X] Finish message handler hatası: {e}", exc_info=True)
+
+    @app.event("member_left_channel")
+    def handle_member_left_evaluation(event):
+        """Değerlendirme kanalından kullanıcı ayrıldığında."""
+        try:
+            channel_id = event.get("channel")
+            user_id = event.get("user")
+            
+            # Bu kanal bir değerlendirme kanalı mı?
+            settings = get_settings()
+            db_client = DatabaseClient(db_path=settings.database_path)
+            eval_repo = ChallengeEvaluationRepository(db_client)
+            
+            evaluation = eval_repo.get_by_channel_id(channel_id)
+            if not evaluation:
+                return
+            
+            # Kullanıcı değerlendirici mi kontrol et
+            from src.repositories import ChallengeEvaluatorRepository
+            evaluator_repo = ChallengeEvaluatorRepository(db_client)
+            
+            evaluator = evaluator_repo.get_by_evaluation_and_user(
+                evaluation["id"], 
+                user_id
+            )
+            
+            if evaluator:
+                # Değerlendirici kaydını sil
+                evaluator_repo.delete(evaluator["id"])
+                logger.info(f"[+] Değerlendirici kanaldan ayrıldı ve kaydı silindi: {user_id} | Evaluation: {evaluation['id']}")
+            
+        except Exception as e:
+            logger.error(f"[X] Member left handler hatası: {e}", exc_info=True)

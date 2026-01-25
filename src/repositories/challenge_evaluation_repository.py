@@ -15,6 +15,11 @@ class ChallengeEvaluationRepository(BaseRepository):
         evaluations = self.list(filters={"challenge_hub_id": challenge_hub_id})
         return evaluations[0] if evaluations else None
 
+    def get_by_channel_id(self, channel_id: str) -> Optional[Dict[str, Any]]:
+        """Kanal ID'sine göre değerlendirme getirir."""
+        evaluations = self.list(filters={"evaluation_channel_id": channel_id})
+        return evaluations[0] if evaluations else None
+
     def get_pending_evaluations(self) -> List[Dict[str, Any]]:
         """Deadline'ı geçmiş ve tamamlanmamış değerlendirmeleri getirir."""
         try:

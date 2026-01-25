@@ -16,6 +16,7 @@ from src.repositories import (
     ChallengeParticipantRepository
 )
 from src.clients import CronClient
+from src.core.settings import get_settings
 
 
 class ChallengeEvaluationService:
@@ -46,7 +47,7 @@ class ChallengeEvaluationService:
     ) -> Dict[str, Any]:
         """
         Challenge için değerlendirme başlatır.
-        Challenge kanalına 'Projeyi Değerlendir' butonu gönderir.
+        Değerlendirme kanalını otomatik oluşturur ve tüm katılımcıları ekler.
         """
         try:
             # Challenge kontrolü
@@ -77,13 +78,102 @@ class ChallengeEvaluationService:
             }
             self.evaluation_repo.create(evaluation_data)
 
-            # Mesajın gönderileceği kanal:
-            # Öncelik: hub_channel (challenge ilanının olduğu ortak kanal),
-            # yoksa tetikleyen kanal (trigger_channel_id)
-            target_channel = challenge.get("hub_channel_id") or trigger_channel_id
+            # 1. Değerlendirme kanalını HEMEN oluştur
+            channel_suffix = str(uuid.uuid4())[:8]
+            channel_name = f"challenge-evaluation-{channel_suffix}"
+            
+            try:
+                eval_channel = self.conv.create_channel(
+                    name=channel_name,
+                    is_private=True
+                )
+                eval_channel_id = eval_channel["id"]
+                
+                # Değerlendirme kaydını güncelle
+                self.evaluation_repo.update(evaluation_id, {
+                    "evaluation_channel_id": eval_channel_id,
+                    "status": "evaluating"
+                })
+                
+                logger.info(f"[+] Değerlendirme kanalı oluşturuldu: {eval_channel_id} | Challenge: {challenge_id}")
+            except Exception as e:
+                logger.error(f"[X] Değerlendirme kanalı oluşturulamadı: {e}", exc_info=True)
+                return {
+                    "success": False,
+                    "message": "❌ Değerlendirme kanalı oluşturulamadı."
+                }
 
-            # Challenge kanalına mesaj gönder
-            blocks = [
+            # 2. Tüm katılımcıları kanala ekle (creator + participants + admin)
+            settings = get_settings()
+            ADMIN_USER_ID = settings.admin_slack_id
+            creator_id = challenge.get("creator_id")
+            participants = self.participant_repo.list(filters={"challenge_hub_id": challenge_id})
+            participant_ids = [p["user_id"] for p in participants]
+            
+            # Tüm kullanıcıları birleştir (tekrarları önle)
+            all_user_ids = set()
+            if creator_id:
+                all_user_ids.add(creator_id)
+            for pid in participant_ids:
+                all_user_ids.add(pid)
+            if ADMIN_USER_ID:
+                all_user_ids.add(ADMIN_USER_ID)
+            
+            # Kullanıcıları kanala davet et
+            try:
+                self.conv.invite_users(eval_channel_id, list(all_user_ids))
+                logger.info(f"[+] {len(all_user_ids)} kullanıcı değerlendirme kanalına eklendi | Evaluation: {evaluation_id}")
+            except Exception as e:
+                logger.warning(f"[!] Kullanıcılar kanala davet edilirken hata: {e}")
+
+            # 3. 48 saat sonra otomatik kapatma görevi planla
+            self.cron.add_once_job(
+                func=self.finalize_evaluation,
+                delay_minutes=48 * 60,
+                job_id=f"finalize_evaluation_{evaluation_id}",
+                args=[evaluation_id]
+            )
+            logger.info(f"[+] 48 saatlik değerlendirme timer'ı başlatıldı | Evaluation: {evaluation_id}")
+
+            # 4. Kanal açılış mesajını gönder
+            welcome_blocks = [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "📊 Challenge Değerlendirme",
+                        "emoji": True
+                    }
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            "Bu kanal 48 saat açık kalacak.\n\n"
+                            "*Komutlar:*\n"
+                            "• `/challenge set True` - Proje başarılı\n"
+                            "• `/challenge set False` - Proje başarısız\n"
+                            "• `/challenge set github <link>` - GitHub repo linki\n\n"
+                            "💡 *Not:* Başarılı sayılması için True > False ve public GitHub repo gerekli.\n\n"
+                            "⚠️ *Proje ekibi (creator + katılımcılar) oy veremez.* Sadece harici değerlendiriciler oy kullanabilir."
+                        )
+                    }
+                }
+            ]
+            
+            try:
+                self.chat.post_message(
+                    channel=eval_channel_id,
+                    text="📊 Challenge Değerlendirme - Hoş geldiniz!",
+                    blocks=welcome_blocks
+                )
+            except Exception as e:
+                logger.warning(f"[!] Değerlendirme açılış mesajı gönderilemedi: {e}")
+
+            # 5. Hub kanalına bilgilendirme mesajı gönder (jüri için butonlu)
+            target_channel = challenge.get("hub_channel_id") or trigger_channel_id
+            info_blocks = [
                 {
                     "type": "header",
                     "text": {
@@ -97,10 +187,11 @@ class ChallengeEvaluationService:
                     "text": {
                         "type": "mrkdwn",
                         "text": (
-                            "Projeyi değerlendirmek için butona tıklayın.\n"
-                            "Max 3 değerlendirici alınacak.\n\n"
+                            f"Değerlendirme kanalı oluşturuldu ve proje ekibi otomatik eklendi.\n\n"
+                            f"📊 *Değerlendirme Kanalı:* <#{eval_channel_id}>\n\n"
                             "💡 *Değerlendirme Süreci:*\n"
                             "• Değerlendirme kanalı 48 saat açık kalacak\n"
+                            "• Max 3 harici değerlendirici (jüri) alınacak\n"
                             "• Her değerlendirici `/challenge set True` veya `/challenge set False` yazacak\n"
                             "• Başarılı sayılması için True > False ve public GitHub repo gerekli"
                         )
@@ -113,7 +204,7 @@ class ChallengeEvaluationService:
                             "type": "button",
                             "text": {
                                 "type": "plain_text",
-                                "text": "📊 Projeyi Değerlendir",
+                                "text": "📊 Projeyi Değerlendir (Jüri)",
                                 "emoji": True
                             },
                             "style": "primary",
@@ -126,8 +217,8 @@ class ChallengeEvaluationService:
 
             self.chat.post_message(
                 channel=target_channel,
-                text="🎯 Challenge Tamamlandı! Projeyi değerlendirmek için butona tıklayın.",
-                blocks=blocks
+                text="🎯 Challenge Tamamlandı! Değerlendirme kanalı oluşturuldu.",
+                blocks=info_blocks
             )
 
             logger.info(f"[+] Değerlendirme başlatıldı | Challenge: {challenge_id} | Evaluation: {evaluation_id}")
@@ -173,7 +264,8 @@ class ChallengeEvaluationService:
                 }
 
             # Proje ekibi & owner bilgisi
-            ADMIN_USER_ID = "U02LAJFJJLE"  # Akademi owner (her zaman kanala girebilir)
+            settings = get_settings()
+            ADMIN_USER_ID = settings.admin_slack_id
             creator_id = challenge.get("creator_id")
             participants = self.participant_repo.list(filters={"challenge_hub_id": challenge["id"]})
             participant_ids = [p["user_id"] for p in participants]
@@ -369,7 +461,8 @@ class ChallengeEvaluationService:
                 }
 
             # Admin oy veremez, sadece onay verebilir
-            ADMIN_USER_ID = "U02LAJFJJLE"  # Akademi owner
+            settings = get_settings()
+            ADMIN_USER_ID = settings.admin_slack_id
             if user_id == ADMIN_USER_ID:
                 return {
                     "success": False,
@@ -695,10 +788,11 @@ class ChallengeEvaluationService:
     ) -> Dict[str, Any]:
         """
         Admin onayı ile değerlendirmeyi sonlandırır.
-        Sadece admin (U02LAJFJJLE) çağırabilir.
+        Sadece admin çağırabilir.
         """
         try:
-            ADMIN_USER_ID = "U02LAJFJJLE"
+            settings = get_settings()
+            ADMIN_USER_ID = settings.admin_slack_id
             if admin_user_id != ADMIN_USER_ID:
                 return {
                     "success": False,

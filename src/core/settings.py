@@ -34,6 +34,9 @@ class BotSettings(BaseSettings):
     # GitHub Repo (Opsiyonel)
     github_repo: Optional[str] = Field(None, description="GitHub repository URL")
     
+    # Admin Ayarları
+    admin_slack_id: Optional[str] = Field(None, description="Admin kullanıcı Slack ID")
+    
     # Logging Ayarları
     log_level: str = Field("INFO", description="Log seviyesi (DEBUG, INFO, WARNING, ERROR)")
     log_file: str = Field("logs/cemil_detailed.log", description="Log dosyası yolu")

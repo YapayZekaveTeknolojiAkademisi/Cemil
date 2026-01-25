@@ -2,6 +2,16 @@
 
 Projede yapılan tüm önemli değişiklikler bu dosyada belgelenecektir.
 
+## [1.0.1] - 2026-01-22
+
+### 🐛 Hata Düzeltmeleri (Bug Fixes)
+- **Challenge Değerlendirme Kanalı**: Değerlendirme kanalından ayrılan kullanıcıların `challenge_evaluators` tablosundan kaydı silinmiyordu. Bu durum değerlendirici sayısının yanlış hesaplanmasına ve maksimum 3 değerlendirici limitinin erken dolmasına neden oluyordu.
+  - `member_left_channel` event handler'ı eklendi
+  - `ChallengeEvaluationRepository.get_by_channel_id()` metodu eklendi
+  - Kullanıcı kanaldan ayrıldığında değerlendirici kaydı otomatik olarak siliniyor
+  - README.md'de Slack App ayarlarına `member_left_channel` event'i eklendi
+
+
 ## [1.0.0] - 2026-01-17
 
 ### 🚀 Yeni Özellikler (Features)

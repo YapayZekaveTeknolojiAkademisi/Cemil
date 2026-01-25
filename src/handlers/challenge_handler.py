@@ -110,7 +110,7 @@ def setup_challenge_handlers(
             )
 
     def handle_start_challenge(text: str, user_id: str, channel_id: str):
-        """Challenge başlatma - Sadece kişi sayısı."""
+        """Challenge başlatma - Tema seçim butonlarını göster."""
         try:
             request = ChallengeStartRequest.parse_from_text(text)
         except ValueError as ve:
@@ -121,42 +121,75 @@ def setup_challenge_handlers(
             )
             return
 
-        async def process_start():
-            result = await challenge_service.start_challenge(
-                creator_id=user_id,
-                team_size=request.team_size,
-                channel_id=channel_id  # Mesajı komutun çalıştırıldığı kanala gönder
+        # Mevcut temaları veritabanından çek
+        from src.repositories import ChallengeThemeRepository
+        from src.clients import DatabaseClient
+        
+        db_client = DatabaseClient(db_path=settings.database_path)
+        theme_repo = ChallengeThemeRepository(db_client)
+        active_themes = theme_repo.get_active_themes()
+        
+        if not active_themes:
+            chat_manager.post_ephemeral(
+                channel=channel_id,
+                user=user_id,
+                text="❌ Aktif tema bulunamadı. Lütfen yöneticiyle iletişime geçin."
             )
+            return
 
-            if result["success"]:
-                # \n karakterlerinin çalışması için blocks kullan
-                chat_manager.post_ephemeral(
-                    channel=channel_id,
-                    user=user_id,
-                    text=result["message"],
-                    blocks=[{
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": result["message"]
-                        }
-                    }]
-                )
-            else:
-                chat_manager.post_ephemeral(
-                    channel=channel_id,
-                    user=user_id,
-                    text=result["message"],
-                    blocks=[{
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": result["message"]
-                        }
-                    }]
-                )
+        # Tema seçim butonlarını oluştur (ikonlar veritabanından)
+        theme_buttons = []
+        
+        for theme in active_themes:
+            # Veritabanından icon alanını al, yoksa default kullan
+            icon = theme.get("icon", "🎯")
+            theme_buttons.append({
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"{icon} {theme['name']}",
+                    "emoji": True
+                },
+                "action_id": f"challenge_theme_select_{theme['id']}",
+                "value": f"{request.team_size}|{theme['id']}|{theme['name']}|{channel_id}"
+            })
+        
+        # Random seçeneği ekle
+        theme_buttons.append({
+            "type": "button",
+            "text": {
+                "type": "plain_text",
+                "text": "🎲 Random",
+                "emoji": True
+            },
+            "style": "primary",
+            "action_id": "challenge_theme_select_random",
+            "value": f"{request.team_size}|random|Random|{channel_id}"
+        })
 
-        asyncio.run(process_start())
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"🎯 *{request.team_size + 1} Kişilik Challenge Başlatılıyor*\n\n"
+                        "Bir tema seçin:"
+                    )
+                }
+            },
+            {
+                "type": "actions",
+                "elements": theme_buttons
+            }
+        ]
+
+        chat_manager.post_ephemeral(
+            channel=channel_id,
+            user=user_id,
+            text="🎯 Challenge için tema seçin",
+            blocks=blocks
+        )
 
     def handle_join_challenge(text: str, user_id: str, channel_id: str):
         """Challenge'a katılma."""
@@ -619,3 +652,88 @@ def setup_challenge_handlers(
         """Challenge join butonu için fallback handler (Slack'in otomatik oluşturduğu action_id'ler için)."""
         # Önce normal handler'ı çağır
         handle_challenge_join_button(ack, body)
+
+    # Tema seçim butonu handler'ı
+    @app.action(re.compile(r"^challenge_theme_select_.*"))
+    def handle_theme_selection(ack, body):
+        """Tema seçim butonuna tıklandığında challenge'ı başlat."""
+        ack()
+        
+        user_id = body["user"]["id"]
+        channel_id = body["channel"]["id"]
+        
+        # Action'dan değerleri al
+        actions = body.get("actions", [])
+        if not actions:
+            logger.warning(f"[!] Theme selection payload'ında action bulunamadı: {body}")
+            return
+        
+        action = actions[0]
+        action_value = action.get("value", "")
+        
+        # Value formatı: "team_size|theme_id|theme_name|original_channel_id"
+        try:
+            parts = action_value.split("|")
+            team_size = int(parts[0])
+            theme_id = parts[1]  # "random" veya gerçek tema ID
+            theme_name = parts[2]
+            original_channel_id = parts[3] if len(parts) > 3 else channel_id
+        except (ValueError, IndexError) as e:
+            logger.error(f"[X] Theme selection value parse hatası: {e}")
+            chat_manager.post_ephemeral(
+                channel=channel_id,
+                user=user_id,
+                text="❌ Tema seçimi işlenirken bir hata oluştu."
+            )
+            return
+        
+        # Kullanıcı bilgisini al
+        try:
+            user_data = user_repo.get_by_slack_id(user_id)
+            user_name = user_data.get('full_name', user_id) if user_data else user_id
+        except Exception:
+            user_name = user_id
+        
+        logger.info(f"[>] Tema seçildi: {theme_name} | Kullanıcı: {user_name} ({user_id}) | Takım: {team_size + 1}")
+        
+        async def process_start_with_theme():
+            # theme_id "random" ise None gönder (random seçilecek)
+            selected_theme = None if theme_id == "random" else theme_name
+            
+            result = await challenge_service.start_challenge(
+                creator_id=user_id,
+                team_size=team_size,
+                channel_id=original_channel_id,
+                theme=selected_theme  # Yeni parametre
+            )
+
+            if result["success"]:
+                theme_info = f" | Tema: {theme_name}" if theme_name != "Random" else " | Tema: Random (takım dolunca seçilecek)"
+                success_msg = result["message"] + f"\n\n🎨 *Seçilen Tema:* {theme_name}"
+                chat_manager.post_ephemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text=success_msg,
+                    blocks=[{
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": success_msg
+                        }
+                    }]
+                )
+            else:
+                chat_manager.post_ephemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text=result["message"],
+                    blocks=[{
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": result["message"]
+                        }
+                    }]
+                )
+
+        asyncio.run(process_start_with_theme())

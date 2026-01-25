@@ -137,7 +137,9 @@ class DatabaseClient(metaclass=SingletonMeta):
 
                 # Akademi admin kullanıcısını garanti altına al
                 try:
-                    admin_slack_id = "U02LAJFJJLE"
+                    from src.core.settings import get_settings
+                    settings = get_settings()
+                    admin_slack_id = settings.admin_slack_id
                     cursor.execute("SELECT id FROM users WHERE slack_id = ?", (admin_slack_id,))
                     admin_row = cursor.fetchone()
                     if not admin_row:
