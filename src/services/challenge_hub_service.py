@@ -19,6 +19,7 @@ from src.repositories import (
     UserChallengeStatsRepository
 )
 from src.clients import GroqClient, CronClient
+from src.core.settings import get_settings
 from src.services import ChallengeEnhancementService
 
 
@@ -944,13 +945,49 @@ class ChallengeHubService:
                 logger.warning(f"[!] İstatistik güncelleme hatası: {e}")
             
             # Değerlendirme başlat (KANAL ARŞİVLENMEDEN ÖNCE - mesaj göndermek için)
+            evaluation_channel_id = None
             if self.evaluation_service:
                 try:
-                    await self.evaluation_service.start_evaluation(challenge_id, channel_id)
+                    eval_result = await self.evaluation_service.start_evaluation(challenge_id, channel_id)
                     logger.info(f"[+] Değerlendirme başlatıldı | Challenge: {challenge_id}")
+                    
+                    if eval_result.get("success"):
+                        evaluation_channel_id = eval_result.get("evaluation_channel_id")
+                        
+                        # Challenge kanalına veda ve yönlendirme mesajı at
+                        if evaluation_channel_id:
+                            self.chat.post_message(
+                                channel=channel_id,
+                                text=f"🚀 Challenge tamamlandı! Değerlendirme süreci için <#{evaluation_channel_id}> kanalına geçiyoruz...",
+                                blocks=[
+                                    {
+                                        "type": "section",
+                                        "text": {
+                                            "type": "mrkdwn",
+                                            "text": (
+                                                f"🎊 *Tebrikler Ekip! Challenge Tamamlandı!* 🎊\n\n"
+                                                f"Süreç artık *Değerlendirme Aşamasına* geçti.\n"
+                                                f"Tüm ekip üyeleri otomatik olarak yeni kanala taşınıyor: <#{evaluation_channel_id}>\n\n"
+                                                f"Bu kanal birazdan arşivlenecektir. Görüşmek üzere! 👋"
+                                            )
+                                        }
+                                    }
+                                ]
+                            )
                 except Exception as e:
                     logger.warning(f"[!] Değerlendirme başlatılamadı: {e}")
             
+            # Challenge Status'unu GÜNCELLE (Recruiting/Active -> Evaluating)
+            # Bu sayede kullanıcı hemen yeni challenge açabilir (çünkü start_challenge sadece Active/Recruiting kontrol ediyor)
+            try:
+                self.hub_repo.update(challenge_id, {
+                    "status": "evaluating",
+                    "ended_at": datetime.now().isoformat()
+                })
+                logger.info(f"[+] Challenge status güncellendi: {challenge_id} | Status: evaluating")
+            except Exception as e:
+                logger.error(f"[X] Challenge status güncellenemedi: {e}")
+
             # Kanalı arşivle (kapat) - Değerlendirme mesajı gönderildikten SONRA
             try:
                 success = self.conv.archive_channel(channel_id)
@@ -964,6 +1001,103 @@ class ChallengeHubService:
             logger.info(f"[+] Challenge kapatıldı | ID: {challenge_id}")
         except Exception as e:
             logger.error(f"[X] Challenge kapatma hatası: {e}", exc_info=True)
+
+    async def request_finish_challenge(self, challenge_id: str, requester_id: str, channel_id: str) -> Dict[str, Any]:
+        """
+        Challenge bitirme isteğini işler. Doğrudan bitirmez, admine onay gönderir.
+        """
+        try:
+            challenge = self.hub_repo.get(challenge_id)
+            if not challenge:
+                return {"success": False, "message": "❌ Challenge bulunamadı."}
+
+            if challenge.get("status") != "active":
+                return {"success": False, "message": f"❌ Challenge zaten {challenge.get('status')} durumunda."}
+
+            # İsteyen kullanıcının bilgisini al
+            try:
+                user_info = self.chat.client.users_info(user=requester_id)
+                requester_name = user_info["user"]["real_name"]
+            except:
+                requester_name = requester_id
+
+            # Admin kanalını bul
+            settings = get_settings()
+            admin_channel = settings.admin_channel_id
+
+            if not admin_channel:
+                logger.error("[X] Admin kanalı (ADMIN_CHANNEL_ID) yapılandırılmamış!")
+                return {
+                    "success": False, 
+                    "message": "❌ Sistem hatası: Admin kanalı bulunamadı. Lütfen yetkiliye bildirin."
+                }
+
+            # Admine sadeleştirilmiş onay mesajı gönder
+            admin_blocks = [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            f"🛑 *Challenge Bitirme İsteği*\n"
+                            f"📣 İsteyen: *{requester_name}* | 🆔 Challenge: `{challenge_id[:8]}`"
+                        )
+                    }
+                },
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "✅ Onayla",
+                                "emoji": True
+                            },
+                            "style": "primary",
+                            "action_id": "admin_approve_finish_challenge",
+                            "value": f"{challenge_id}|{channel_id}|{requester_id}"
+                        },
+                        {
+                            "type": "button",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "❌ Reddet",
+                                "emoji": True
+                            },
+                            "style": "danger",
+                            "action_id": "admin_reject_finish_challenge",
+                            "value": f"{challenge_id}|{channel_id}|{requester_id}"
+                        },
+                        {
+                            "type": "button",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "🔍 Detaylar",
+                                "emoji": True
+                            },
+                            "action_id": "admin_finish_details",
+                            "value": f"{challenge_id}|{channel_id}|{requester_id}"
+                        }
+                    ]
+                }
+            ]
+
+            self.chat.post_message(
+                channel=admin_channel,
+                text=f"🛑 Challenge Bitirme İsteği: {challenge_id[:8]}",
+                blocks=admin_blocks
+            )
+
+            # Kullanıcıya bilgi ver
+            return {
+                "success": True,
+                "message": "✅ Challenge bitirme isteğiniz Akademi Yönetimine iletildi. Onaylandığında işlem tamamlanacaktır."
+            }
+
+        except Exception as e:
+            logger.error(f"[X] Challenge bitirme isteği hatası: {e}", exc_info=True)
+            return {"success": False, "message": "❌ İstek oluşturulurken hata oluştu."}
 
     def _get_hub_channel(self) -> Optional[str]:
         """#challenge-hub kanalını bulur."""

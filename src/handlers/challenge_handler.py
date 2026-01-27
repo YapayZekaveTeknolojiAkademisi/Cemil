@@ -49,7 +49,9 @@ def setup_challenge_handlers(
                     "`/challenge status` - Challenge durumunu görüntüle\n"
                     "`/challenge bitir` - Challenge'ı bitir ve değerlendirmeyi başlat (challenge kanalında)\n"
                     "`/challenge set True/False` - Değerlendirme kanalında oy verin\n"
-                    "`/challenge set github <link>` - Değerlendirme kanalında GitHub repo linki ekleyin\n\n"
+                    "`/challenge set github <link>` - Değerlendirme kanalında GitHub repo linki ekleyin\n"
+                    "`/challenge force [success|fail]` - (Admin) Değerlendirmeyi zorla bitir\n\n"
+                    "Örnek: `/challenge start 4`\n\n"
                     "Örnek: `/challenge start 4`\n\n"
                     "💡 *Not:* Tema ve proje takım dolunca otomatik olarak random seçilir."
                 )
@@ -95,6 +97,8 @@ def setup_challenge_handlers(
             handle_challenge_finish(user_id, channel_id)
         elif subcommand == "set":
             handle_challenge_set(subcommand_text, user_id, channel_id)
+        elif subcommand == "force":
+            handle_challenge_force(subcommand_text, user_id, channel_id)
         else:
             chat_manager.post_ephemeral(
                 channel=channel_id,
@@ -384,30 +388,26 @@ def setup_challenge_handlers(
                     logger.warning(f"[!] Challenge finish ephemeral (already started) gönderilemedi: {e}")
                 return
             
-            # Challenge'ı kapat (_close_challenge fonksiyonu değerlendirmeyi başlatır ve kanalı arşivler)
+            # Challenge'ı bitirme isteği oluştur (Admin onayı için)
             try:
-                await challenge_service._close_challenge(challenge["id"], channel_id)
-                target_channel = challenge.get("hub_channel_id") or channel_id
-                try:
-                    chat_manager.post_ephemeral(
-                        channel=target_channel,
-                        user=user_id,
-                        text="✅ Challenge bitirildi! Değerlendirme başlatıldı ve challenge kanalı arşivlendi."
-                    )
-                except Exception as e:
-                    # Kanal arşivlenmişse veya başka bir Slack hatası varsa, sadece logla
-                    logger.warning(f"[!] Challenge finish ephemeral gönderilemedi: {e}")
+                result = await challenge_service.request_finish_challenge(
+                    challenge_id=challenge["id"],
+                    requester_id=user_id,
+                    channel_id=channel_id
+                )
+                
+                chat_manager.post_ephemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text=result["message"]
+                )
             except Exception as e:
-                logger.error(f"[X] Challenge bitirme hatası: {e}", exc_info=True)
-                target_channel = challenge.get("hub_channel_id") or channel_id
-                try:
-                    chat_manager.post_ephemeral(
-                        channel=target_channel,
-                        user=user_id,
-                        text=f"❌ Challenge bitirilirken hata oluştu: {str(e)}"
-                    )
-                except Exception as inner_e:
-                    logger.warning(f"[!] Challenge finish hata mesajı gönderilemedi: {inner_e}")
+                logger.error(f"[X] Challenge bitirme isteği hatası: {e}", exc_info=True)
+                chat_manager.post_ephemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text=f"❌ İşlem başarısız: {str(e)}"
+                )
         
         asyncio.run(process_finish())
 
@@ -484,7 +484,76 @@ def setup_challenge_handlers(
                 text=result["message"]
             )
         
+
         asyncio.run(process_set())
+
+    def handle_challenge_force(text: str, user_id: str, channel_id: str):
+        """Admin force komutu - Değerlendirmeyi zorla bitir."""
+        if not text:
+            chat_manager.post_ephemeral(
+                channel=channel_id,
+                user=user_id,
+                text="❌ Kullanım: `/challenge force [success|fail]`"
+            )
+            return
+
+        async def process_force():
+            # Admin yetki kontrolü
+            settings = get_settings()
+            ADMIN_USER_ID = settings.admin_slack_id
+            
+            if user_id != ADMIN_USER_ID:
+                chat_manager.post_ephemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="❌ Bu komutu sadece admin kullanabilir."
+                )
+                return
+
+            # Bu kanal bir değerlendirme kanalı mı?
+            from src.repositories import ChallengeEvaluationRepository
+            from src.clients import DatabaseClient
+            
+            db_client = DatabaseClient(db_path=settings.database_path)
+            eval_repo = ChallengeEvaluationRepository(db_client)
+            
+            evaluation_list = eval_repo.list(filters={"evaluation_channel_id": channel_id})
+            if not evaluation_list:
+                chat_manager.post_ephemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="❌ Bu komut sadece değerlendirme kanalında kullanılabilir."
+                )
+                return
+            
+            evaluation = evaluation_list[0]
+            
+            # Komutu işle
+            decision = text.lower().strip()
+            
+            if decision == "success":
+                # Başarılı olarak işaretle (Yönetici Kararı)
+                result = await evaluation_service.force_complete_evaluation(evaluation["id"], user_id, "success")
+                
+            elif decision == "fail":
+                # Başarısız olarak işaretle (Yönetici Kararı)
+                result = await evaluation_service.force_complete_evaluation(evaluation["id"], user_id, "failed")
+                
+            else:
+                 chat_manager.post_ephemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="❌ Geçersiz seçenek. Kullanım: `/challenge force [success|fail]`"
+                )
+                 return
+
+            chat_manager.post_ephemeral(
+                channel=channel_id,
+                user=user_id,
+                text=result["message"]
+            )
+
+        asyncio.run(process_force())
 
     @app.action("challenge_join_button")
     def handle_challenge_join_button(ack, body):
@@ -736,4 +805,247 @@ def setup_challenge_handlers(
                     }]
                 )
 
+
         asyncio.run(process_start_with_theme())
+
+    @app.action("admin_approve_finish_challenge")
+    def handle_admin_approve_finish(ack, body):
+        """Admin challenge bitirmeyi onayladığında."""
+        ack()
+        user_id = body["user"]["id"]
+        channel_id = body["channel"]["id"]
+        message_ts = body["message"]["ts"]
+        
+        # Admin kontrolü (Slack'te admin kanalı yetkisi yeterli ama garanti olsun)
+        # Şimdilik sadece logluyoruz, action zaten admin kanalında
+        
+        action_value = body["actions"][0]["value"]
+        # value: challenge_id|channel_id|requester_id
+        parts = action_value.split("|")
+        challenge_id = parts[0]
+        challenge_channel_id = parts[1]
+        requester_id = parts[2]
+        
+        logger.info(f"[admin] Challenge bitirme ONAYLANDI | Admin: {user_id} | Challenge: {challenge_id}")
+        
+        async def process_approval():
+            # Challenge'ı kapat
+            try:
+                await challenge_service._close_challenge(challenge_id, challenge_channel_id)
+                
+                # Admin mesajını güncelle
+                chat_manager.update_message(
+                    channel=channel_id,
+                    ts=message_ts,
+                    text="✅ Challenge bitirme isteği ONAYLANDI",
+                    blocks=[
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"✅ *Challenge Bitirme İsteği ONAYLANDI*\n\nAdmin: <@{user_id}>\nChallenge: `{challenge_id[:8]}`"
+                            }
+                        }
+                    ]
+                )
+                
+                # İsteyen kullanıcıya bilgi ver (DM)
+                try:
+                    dm = chat_manager.client.conversations_open(users=requester_id)
+                    dm_channel = dm["channel"]["id"]
+                    chat_manager.post_message(
+                        channel=dm_channel,
+                        text=f"✅ Challenge (`{challenge_id[:8]}`) bitirme isteğiniz ONAYLANDI ve challenge sonlandırıldı."
+                    )
+                except Exception as e:
+                    logger.warning(f"Kullanıcıya DM atılamadı: {e}")
+                    
+            except Exception as e:
+                logger.error(f"Approval process error: {e}")
+                chat_manager.post_message(
+                    channel=channel_id,
+                    text=f"❌ İşlem sırasında hata oluştu: {str(e)}"
+                )
+        
+        asyncio.run(process_approval())
+
+    @app.action("admin_reject_finish_challenge")
+    def handle_admin_reject_finish(ack, body):
+        """Admin challenge bitirmeyi reddettiğinde."""
+        ack()
+        user_id = body["user"]["id"]
+        channel_id = body["channel"]["id"]
+        message_ts = body["message"]["ts"]
+        
+        action_value = body["actions"][0]["value"]
+        parts = action_value.split("|")
+        challenge_id = parts[0]
+        requester_id = parts[2]
+        
+        logger.info(f"[admin] Challenge bitirme REDDEDİLDİ | Admin: {user_id} | Challenge: {challenge_id}")
+        
+        # Admin mesajını güncelle
+        try:
+            chat_manager.update_message(
+                channel=channel_id,
+                ts=message_ts,
+                text="❌ Challenge bitirme isteği REDDEDİLDİ",
+                blocks=[
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"❌ *Challenge Bitirme İsteği REDDEDİLDİ*\n\nAdmin: <@{user_id}>\nChallenge: `{challenge_id[:8]}`"
+                        }
+                    }
+                ]
+            )
+            
+            # İsteyen kullanıcıya bilgi ver (DM)
+            try:
+                dm = chat_manager.client.conversations_open(users=requester_id)
+                dm_channel = dm["channel"]["id"]
+                chat_manager.post_message(
+                    channel=dm_channel,
+                    text=f"❌ Challenge (`{challenge_id[:8]}`) bitirme isteğiniz REDDEDİLDİ."
+                )
+            except Exception as e:
+                logger.warning(f"Kullanıcıya DM atılamadı: {e}")
+                
+        except Exception as e:
+            logger.error(f"Rejection process error: {e}")
+
+    @app.action("admin_finish_details")
+    def handle_admin_finish_details(ack, body):
+        """Admin detay butonuna tıkladığında."""
+        ack()
+        user_id = body["user"]["id"]
+        channel_id = body["channel"]["id"]
+        
+        action_value = body["actions"][0]["value"]
+        parts = action_value.split("|")
+        challenge_id = parts[0]
+        challenge_channel_id = parts[1]
+        requester_id = parts[2]
+        
+        # Challenge detaylarını veritabanından çek
+        # (Servis yerine buradan DB veya Repo çağırabiliriz ama service kullanmak daha temiz)
+        # Ancak burada servise gitmeden hızlıca repo kullanacağız.
+        
+        # Handler içinde repository initiate etmek yerine, service üzerinden çağırmadım çünkü context dışında.
+        # Basitçe ephemeral mesaj dönelim.
+        
+        async def show_details():
+            try:
+                # Challenge detaylarını almak için servisi kullan (zaten yukarıda import edilmiş)
+                challenge = challenge_service.hub_repo.get(challenge_id)
+                if not challenge:
+                    chat_manager.post_ephemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text="❌ Challenge bulunamadı."
+                    )
+                    return
+
+                detail_text = (
+                    f"🛑 *Challenge Detayları*\n\n"
+                    f"🆔 *ID:* `{challenge_id}`\n"
+                    f"👤 *İsteyen:* <@{requester_id}>\n"
+                    f"🎨 *Tema:* {challenge.get('theme', 'N/A')}\n"
+                    f"📊 *Durum:* {challenge.get('status', 'N/A')}\n"
+                    f"⏱️ *Bitiş:* {challenge.get('deadline', 'N/A')}\n"
+                    f"📢 *Kanal:* <#{challenge_channel_id}>\n\n"
+                    f"💡 *Takım:* {challenge.get('team_size', 0)} kişi"
+                )
+                
+                chat_manager.post_ephemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text=detail_text
+                )
+            except Exception as e:
+                logger.error(f"Details error: {e}")
+                chat_manager.post_ephemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="❌ Detaylar alınırken hata oluştu."
+                )
+        
+        asyncio.run(show_details())
+
+    @app.action("challenge_join_jury_toggle")
+    def handle_jury_toggle(ack, body):
+        """Jüri katıl/çık (toggle) butonu."""
+        ack()
+        
+        user_id = body["user"]["id"]
+        channel_id = body["channel"]["id"]
+        
+        actions = body.get("actions", [])
+        if not actions: return
+        
+        evaluation_id = actions[0]["value"]
+        
+        logger.info(f"[admin] Jüri toggle tıklandı: {user_id} | Eval: {evaluation_id}")
+        
+        async def process_toggle():
+            try:
+                result = await evaluation_service.toggle_juror(evaluation_id, user_id)
+                
+                # Kullanıcıya bilgi ver (Ephemeral)
+                chat_manager.post_ephemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text=result["message"]
+                )
+                
+                # Buton üzerindeki sayıyı güncelle (Eğer mümkünse)
+                # Not: Slack'te butonu herkese farklı gösteremeyiz, ancak blokları güncelleyerek
+                # tüm kanal için sayıyı güncelleyebiliriz (X/3).
+                if result.get("success") and result.get("action") in ["joined", "left"]:
+                    new_count = result.get("count", 0)
+                    is_full = result.get("is_full", False)
+                    
+                    # Mesajı güncelle
+                    message_ts = body["message"]["ts"]
+                    original_blocks = body["message"]["blocks"]
+                    
+                    import copy
+                    new_blocks = copy.deepcopy(original_blocks)
+                    
+                    # Butonu bul ve güncelle veya kaldır
+                    for block in new_blocks:
+                        if block.get("type") == "actions":
+                            if is_full:
+                                # Dolduysa butonu kaldır ve bilgi mesajı ekle
+                                block["elements"] = [] # Elementleri boşalt (veya bloğu sil)
+                            else:
+                                # Dolmadıysa sayıyı güncelle
+                                for elem in block["elements"]:
+                                    if elem.get("action_id") == "challenge_join_jury_toggle":
+                                        elem["text"]["text"] = f"🙋 Jüri Ol ({new_count}/3)"
+                    
+                    # Eğer dolduysa actions bloğunu tamamen kaldırabiliriz veya "Jüri Tamamlandı" yazabiliriz
+                    if is_full:
+                        new_blocks = [b for b in new_blocks if b.get("type") != "actions"]
+                        new_blocks.append({
+                            "type": "context",
+                            "elements": [{"type": "mrkdwn", "text": "✅ *Jüri Ekibi Tamamlandı! Değerlendirme başladı.*"}]
+                        })
+
+                    chat_manager.update_message(
+                        channel=channel_id,
+                        ts=message_ts,
+                        text="🗳️ Jüri Aranıyor (Güncellendi)",
+                        blocks=new_blocks
+                    )
+
+            except Exception as e:
+                logger.error(f"Jury toggle error: {e}")
+                chat_manager.post_ephemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="❌ İşlem sırasında hata oluştu."
+                )
+
+        asyncio.run(process_toggle())

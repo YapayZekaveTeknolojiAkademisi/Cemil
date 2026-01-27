@@ -135,28 +135,20 @@ class ChallengeEvaluationService:
             )
             logger.info(f"[+] 48 saatlik değerlendirme timer'ı başlatıldı | Evaluation: {evaluation_id}")
 
-            # 4. Kanal açılış mesajını gönder
+            # 4. Kanal açılış mesajını gönder (EKİP İÇİN)
             welcome_blocks = [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "📊 Challenge Değerlendirme",
-                        "emoji": True
-                    }
-                },
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
                         "text": (
-                            "Bu kanal 48 saat açık kalacak.\n\n"
-                            "*Komutlar:*\n"
-                            "• `/challenge set True` - Proje başarılı\n"
-                            "• `/challenge set False` - Proje başarısız\n"
-                            "• `/challenge set github <link>` - GitHub repo linki\n\n"
-                            "💡 *Not:* Başarılı sayılması için True > False ve public GitHub repo gerekli.\n\n"
-                            "⚠️ *Proje ekibi (creator + katılımcılar) oy veremez.* Sadece harici değerlendiriciler oy kullanabilir."
+                            "👋 *Değerlendirme Başladı!*\n\n"
+                            "Harika iş çıkardınız! 🚀 Şimdi projenizi jüriye sunma zamanı.\n\n"
+                            "📌 *Süreç:*\n"
+                            "• 3 kişilik jüri ekibi bekleniyor...\n"
+                            "• Jüri gelince `/challenge set` ile puan verecekler.\n"
+                            "• Sizden sadece GitHub linki bekleniyor: `/challenge set github <link>`\n\n"
+                            "Başarılar! 🍀"
                         )
                     }
                 }
@@ -165,35 +157,23 @@ class ChallengeEvaluationService:
             try:
                 self.chat.post_message(
                     channel=eval_channel_id,
-                    text="📊 Challenge Değerlendirme - Hoş geldiniz!",
+                    text="👋 Değerlendirme Başladı!",
                     blocks=welcome_blocks
                 )
             except Exception as e:
                 logger.warning(f"[!] Değerlendirme açılış mesajı gönderilemedi: {e}")
 
-            # 5. Hub kanalına bilgilendirme mesajı gönder (jüri için butonlu)
+            # 5. Topluluk kanalına JÜRİ ÇAĞRISI gönder
             target_channel = challenge.get("hub_channel_id") or trigger_channel_id
             info_blocks = [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "🎯 Challenge Tamamlandı!",
-                        "emoji": True
-                    }
-                },
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
                         "text": (
-                            f"Değerlendirme kanalı oluşturuldu ve proje ekibi otomatik eklendi.\n\n"
-                            f"📊 *Değerlendirme Kanalı:* <#{eval_channel_id}>\n\n"
-                            "💡 *Değerlendirme Süreci:*\n"
-                            "• Değerlendirme kanalı 48 saat açık kalacak\n"
-                            "• Max 3 harici değerlendirici (jüri) alınacak\n"
-                            "• Her değerlendirici `/challenge set True` veya `/challenge set False` yazacak\n"
-                            "• Başarılı sayılması için True > False ve public GitHub repo gerekli"
+                            f"📣 *Jüri Aranıyor: {challenge.get('theme', 'Proje')}*\n"
+                            "Bir proje daha tamamlandı! Değerlendirmek için 3 gönüllüye ihtiyacımız var.\n\n"
+                            "👇 *Katılmak için butona tıkla:* (Jüri ekibi dolunca otomatik başlar)"
                         )
                     }
                 },
@@ -204,11 +184,11 @@ class ChallengeEvaluationService:
                             "type": "button",
                             "text": {
                                 "type": "plain_text",
-                                "text": "📊 Projeyi Değerlendir (Jüri)",
+                                "text": "🙋 Jüri Ol (0/3)",
                                 "emoji": True
                             },
                             "style": "primary",
-                            "action_id": "evaluate_challenge_button",
+                            "action_id": "challenge_join_jury_toggle",
                             "value": evaluation_id
                         }
                     ]
@@ -217,7 +197,7 @@ class ChallengeEvaluationService:
 
             self.chat.post_message(
                 channel=target_channel,
-                text="🎯 Challenge Tamamlandı! Değerlendirme kanalı oluşturuldu.",
+                text=f"📣 Jüri Aranıyor: {challenge.get('theme')}",
                 blocks=info_blocks
             )
 
@@ -236,202 +216,147 @@ class ChallengeEvaluationService:
                 "message": "❌ Değerlendirme başlatılırken bir hata oluştu."
             }
 
-    async def join_evaluation(
+    async def toggle_juror(
         self,
         evaluation_id: str,
         user_id: str
     ) -> Dict[str, Any]:
         """
-        Kullanıcıyı değerlendirme kanalına ekler.
-        Max 3 harici değerlendirici kontrolü yapar.
-        Proje sahipleri (creator + participants) ve Akademi owner kanala
-        girebilir ancak 3 kişilik değerlendirici sınırına dahil edilmez.
+        Kullanıcıyı jüri havuzuna ekler veya çıkarır (Toggle).
+        3 kişi dolduğunda toplu olarak kanala davet eder.
         """
         try:
             evaluation = self.evaluation_repo.get(evaluation_id)
             if not evaluation:
-                return {
-                    "success": False,
-                    "message": "❌ Değerlendirme bulunamadı."
-                }
+                return {"success": False, "message": "❌ Değerlendirme bulunamadı."}
 
-            # Challenge'ı getir (proje üyesi kontrolü için)
             challenge = self.hub_repo.get(evaluation["challenge_hub_id"])
             if not challenge:
-                return {
-                    "success": False,
-                    "message": "❌ Challenge bulunamadı."
-                }
+                return {"success": False, "message": "❌ Challenge bulunamadı."}
 
-            # Proje ekibi & owner bilgisi
+            # Proje sahibi/üyesi/admin kontrolü - bunlar jüri olamaz
             settings = get_settings()
             ADMIN_USER_ID = settings.admin_slack_id
             creator_id = challenge.get("creator_id")
             participants = self.participant_repo.list(filters={"challenge_hub_id": challenge["id"]})
             participant_ids = [p["user_id"] for p in participants]
 
-            is_admin = user_id == ADMIN_USER_ID
-            is_project_member = (user_id == creator_id) or (user_id in participant_ids)
-
-            # Değerlendirme kanalı var mı kontrol et (DB'den gerçek değer - race condition için güvenli)
-            eval_channel_id = evaluation.get("evaluation_channel_id")
-            is_new_channel = False
-            welcome_blocks = None
-            
-            # Kanal yoksa oluştur (evaluator_count yerine eval_channel_id kontrolü daha güvenli)
-            if not eval_channel_id:
-                # Kanal oluştur (challenge zaten yukarıda çekildi)
-                channel_suffix = str(uuid.uuid4())[:8]
-                channel_name = f"challenge-evaluation-{channel_suffix}"
-                
-                try:
-                    eval_channel = self.conv.create_channel(
-                        name=channel_name,
-                        is_private=True
-                    )
-                    eval_channel_id = eval_channel["id"]
-                    
-                    # Değerlendirme kaydını güncelle
-                    self.evaluation_repo.update(evaluation_id, {
-                        "evaluation_channel_id": eval_channel_id,
-                        "status": "evaluating"
-                    })
-                    
-                    # Açılış mesajını daha sonra (bot kanala davet edildikten sonra) göndermek için sakla
-                    welcome_blocks = [
-                        {
-                            "type": "header",
-                            "text": {
-                                "type": "plain_text",
-                                "text": "📊 Challenge Değerlendirme",
-                                "emoji": True
-                            }
-                        },
-                        {
-                            "type": "section",
-                            "text": {
-                                "type": "mrkdwn",
-                                "text": (
-                                    "Bu kanal 48 saat açık kalacak.\n\n"
-                                    "*Komutlar:*\n"
-                                    "• `/challenge set True` - Proje başarılı\n"
-                                    "• `/challenge set False` - Proje başarısız\n"
-                                    "• `/challenge set github <link>` - GitHub repo linki\n\n"
-                                    "💡 *Not:* Başarılı sayılması için True > False ve public GitHub repo gerekli."
-                                )
-                            }
-                        }
-                    ]
-                    is_new_channel = True
-
-                    # 48 saat sonra otomatik kapatma görevi planla (sadece kanal ilk açıldığında)
-                    self.cron.add_once_job(
-                        func=self.finalize_evaluation,
-                        delay_minutes=48 * 60,
-                        job_id=f"finalize_evaluation_{evaluation_id}",
-                        args=[evaluation_id]
-                    )
-
-                    logger.info(f"[+] Değerlendirme kanalı oluşturuldu: {eval_channel_id} | Challenge: {challenge['id']} | 48 saatlik timer başlatıldı")
-                except Exception as e:
-                    logger.error(f"[X] Değerlendirme kanalı oluşturulamadı: {e}", exc_info=True)
-                    return {
-                        "success": False,
-                        "message": "❌ Değerlendirme kanalı oluşturulamadı."
-                    }
-            else:
-                # Kanal zaten var, mevcut kanala eklenecek
-                logger.info(f"[i] Mevcut değerlendirme kanalı kullanılıyor: {eval_channel_id} | User: {user_id}")
-
-            # Kullanıcıyı kanala ekle
-            if not eval_channel_id:
+            if user_id == ADMIN_USER_ID or user_id == creator_id or user_id in participant_ids:
                 return {
                     "success": False,
-                    "message": "❌ Değerlendirme kanalı bulunamadı."
+                    "message": "⚠️ Proje ekibi veya admin jüri olamaz.",
+                    "action": "none"
                 }
 
-            # 1) Proje ekibi (creator + participants) ve admin:
-            #    - Her zaman kanala girebilir
-            #    - 3 kişilik değerlendirici limitine dahil edilmez
-            if is_project_member or is_admin:
+            # Zaten jüri mi? (Toggle Mantığı)
+            existing_juror = self.evaluator_repo.get_by_evaluation_and_user(evaluation_id, user_id)
+            
+            if existing_juror:
+                # VARSA -> ÇIKAR (LEAVE)
+                self.evaluator_repo.delete(existing_juror["id"])
+                logger.info(f"[-] Jüri havuzundan çıktı: {user_id} | Evaluation: {evaluation_id}")
+                
+                # Güncel sayıyı al
+                count = self.evaluator_repo.count_evaluators(evaluation_id)
+                
+                # DM Gönder
                 try:
-                    self.conv.invite_users(eval_channel_id, [user_id])
-                except Exception as e:
-                    logger.warning(f"[!] Kullanıcı kanala davet edilemedi (ekip/admin): {e}")
-
-                # Yeni kanal ilk kez açıldıysa açılış mesajını gönder
-                if is_new_channel and welcome_blocks:
-                    try:
-                        self.chat.post_message(
-                            channel=eval_channel_id,
-                            text="📊 Challenge Değerlendirme",
-                            blocks=welcome_blocks
+                    dm_channel = self.conv.open_conversation([user_id])
+                    if dm_channel:
+                         self.chat.post_message(
+                            channel=dm_channel["channel"]["id"],
+                            text=f"ℹ️ `{challenge.get('theme')}` projesi jüri adaylığından çekildiniz."
                         )
-                    except Exception as e:
-                        logger.warning(f"[!] Değerlendirme açılış mesajı gönderilemedi: {e}")
+                except: pass
+                
+                return {
+                    "success": True,
+                    "message": "❌ Jüri adaylığından çekildiniz.",
+                    "action": "left",
+                    "count": count,
+                    "max": 3
+                }
+            
+            else:
+                # YOKSA -> EKLE (JOIN)
+                # Önce kontenjan dolu mu kontrol et
+                current_count = self.evaluator_repo.count_evaluators(evaluation_id)
+                if current_count >= 3:
+                    return {
+                        "success": False,
+                        "message": "⚠️ Jüri kontenjanı dolu (3/3).",
+                        "action": "full"
+                    }
 
-                logger.info(f"[+] Proje ekibi/admin değerlendirme kanalına eklendi: {user_id} | Evaluation: {evaluation_id}")
+                # Havuza ekle
+                juror_id = str(uuid.uuid4())
+                self.evaluator_repo.create({
+                    "id": juror_id,
+                    "evaluation_id": evaluation_id,
+                    "user_id": user_id
+                })
+                current_count += 1
+                logger.info(f"[+] Jüri havuzuna eklendi: {user_id} | Evaluation: {evaluation_id}")
+                
+                # DM Gönder
+                try:
+                    dm_channel = self.conv.open_conversation([user_id])
+                    if dm_channel:
+                         self.chat.post_message(
+                            channel=dm_channel["channel"]["id"],
+                            text=(
+                                f"🎉 `{challenge.get('theme')}` projesi için jüri adaylığınız alındı!\n"
+                                f"Şu an *{current_count}/3* kişiyiz. 3 kişi tamamlandığında otomatik olarak kanala ekleneceksiniz.\n\n"
+                                "O zamana kadar bekleyiniz..."
+                            )
+                        )
+                except: pass
+
+                # EĞER 3. KİŞİ İSE -> TOPLU DAVET VE BAŞLAT
+                if current_count >= 3:
+                     # 1. 3 Jüriyi Al
+                    all_jurors = self.evaluator_repo.list_by_evaluation(evaluation_id)
+                    juror_ids = [j["user_id"] for j in all_jurors]
+                    
+                    # 2. Kanala Davet Et (Batch)
+                    eval_channel_id = evaluation.get("evaluation_channel_id")
+                    if eval_channel_id:
+                        try:
+                            self.conv.invite_users(eval_channel_id, juror_ids)
+                            logger.info(f"[+] 3 jüri toplu olarak kanala eklendi: {juror_ids}")
+                            
+                            # Kanal içi karşılama
+                            self.chat.post_message(
+                                channel=eval_channel_id,
+                                text=(
+                                    f"🚨 *JÜRİ EKİBİ TOPLANDI!* 🚨\n\n"
+                                    f"Hoş geldiniz <@{juror_ids[0]}>, <@{juror_ids[1]}>, <@{juror_ids[2]}>!\n"
+                                    f"Değerlendirme süreci resmen başladı. Lütfen projeyi inceleyip `/challenge set` komutlarıyla oyunuzu kullanın."
+                                )
+                            )
+                            
+                            # DM ile haber ver
+                            for j_id in juror_ids:
+                                try:
+                                    dm = self.conv.open_conversation([j_id])
+                                    if dm:
+                                        self.chat.post_message(
+                                            channel=dm["channel"]["id"],
+                                            text="🚀 Jüri ekibi tamamlandı ve kanala eklendiniz! Görev başına!"
+                                        )
+                                except: pass
+                                
+                        except Exception as e:
+                            logger.error(f"[X] Jüri batch davet hatası: {e}")
 
                 return {
                     "success": True,
-                    "message": f"✅ Değerlendirme kanalına eklendiniz! <#{eval_channel_id}>"
+                    "message": f"✅ Jüri listesine eklendiniz! ({current_count}/3)",
+                    "action": "joined",
+                    "count": current_count,
+                    "max": 3,
+                    "is_full": (current_count >= 3)
                 }
-
-            # 2) Harici değerlendiriciler:
-            # Max 3 kişi kontrolü (sadece harici değerlendiriciler sayılır)
-            evaluator_count = self.evaluator_repo.count_evaluators(evaluation_id)
-            if evaluator_count >= 3:
-                return {
-                    "success": False,
-                    "message": "❌ Değerlendirme kanalı dolu (max 3 değerlendirici)."
-                }
-
-            # Zaten değerlendirici olarak eklenmiş mi?
-            existing = self.evaluator_repo.get_by_evaluation_and_user(evaluation_id, user_id)
-            if existing:
-                return {
-                    "success": False,
-                    "message": "⚠️ Zaten değerlendirme kanalındasınız."
-                }
-
-            # Kullanıcıyı (ve ConversationManager içindeki mantıkla botu) kanala davet et
-            try:
-                self.conv.invite_users(eval_channel_id, [user_id])
-            except Exception as e:
-                logger.warning(f"[!] Kullanıcı kanala davet edilemedi: {e}")
-
-            # Değerlendirici kaydı oluştur (harici kullanıcı için)
-            evaluator_id = str(uuid.uuid4())
-            self.evaluator_repo.create({
-                "id": evaluator_id,
-                "evaluation_id": evaluation_id,
-                "user_id": user_id
-            })
-
-            # Yeni kanal oluşturulduysa, açılış mesajını şimdi gönder (bot artık kanalda)
-            if is_new_channel and welcome_blocks:
-                try:
-                    self.chat.post_message(
-                        channel=eval_channel_id,
-                        text="📊 Challenge Değerlendirme",
-                        blocks=welcome_blocks
-                    )
-                except Exception as e:
-                    logger.warning(f"[!] Değerlendirme açılış mesajı gönderilemedi: {e}")
-
-            logger.info(f"[+] Değerlendirici eklendi: {user_id} | Evaluation: {evaluation_id}")
-
-            return {
-                "success": True,
-                "message": f"✅ Değerlendirme kanalına eklendiniz! <#{eval_channel_id}>"
-            }
-
-        except Exception as e:
-            logger.error(f"[X] Değerlendirme katılma hatası: {e}", exc_info=True)
-            return {
-                "success": False,
-                "message": "❌ Değerlendirme kanalına eklenirken bir hata oluştu."
-            }
 
     async def submit_vote(
         self,
@@ -955,3 +880,70 @@ class ChallengeEvaluationService:
 
         except Exception as e:
             logger.error(f"[X] Değerlendirme finalize hatası: {e}", exc_info=True)
+
+    async def force_complete_evaluation(self, evaluation_id: str, admin_user_id: str, result: str) -> Dict[str, Any]:
+        """
+        Admin (Owner) tarafından değerlendirmeyi zorla bitirir.
+        result: 'success' veya 'failed'
+        """
+        try:
+            # Yetki kontrolü
+            settings = get_settings()
+            ADMIN_USER_ID = settings.admin_slack_id
+            
+            if admin_user_id != ADMIN_USER_ID:
+                return {"success": False, "message": "❌ Yetkisiz işlem."}
+
+            evaluation = self.evaluation_repo.get(evaluation_id)
+            if not evaluation:
+                return {"success": False, "message": "❌ Değerlendirme bulunamadı."}
+
+            # Sonucu ayarla
+            final_result = result
+            result_message = ""
+            if result == "success":
+                result_message = "🎉 *Challenge Başarılı!* (Yönetici Kararı)"
+            else:
+                result_message = "❌ *Challenge Başarısız* (Yönetici Kararı)"
+
+            # DB güncelle
+            self.evaluation_repo.update(evaluation_id, {
+                "status": "completed",
+                "final_result": final_result,
+                "completed_at": datetime.now().isoformat()
+            })
+
+            # Challenge HUB güncelle
+            challenge_id = evaluation["challenge_hub_id"]
+            self.hub_repo.update(challenge_id, {
+                "status": "completed",
+                "completed_at": datetime.now().isoformat()
+            })
+
+            # Bildirim gönder
+            eval_channel_id = evaluation.get("evaluation_channel_id")
+            if eval_channel_id:
+                try:
+                    self.chat.post_message(
+                        channel=eval_channel_id,
+                        text=result_message,
+                        blocks=[{
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"{result_message}\n\n👤 İşlemi Yapan: <@{admin_user_id}>"}
+                        }]
+                    )
+                    # Kanalı arşivle
+                    import time
+                    time.sleep(2) # Mesajın gitmesi için kısa bekleme
+                    self.conv.archive_channel(eval_channel_id)
+                except Exception as e:
+                    logger.warning(f"[!] Force complete mesaj/arşiv hatası: {e}")
+
+            return {
+                "success": True, 
+                "message": f"✅ Değerlendirme zorla bitirildi: {result.upper()}"
+            }
+
+        except Exception as e:
+            logger.error(f"[X] Force complete error: {e}")
+            return {"success": False, "message": "❌ İşlem sırasında hata oluştu."}
