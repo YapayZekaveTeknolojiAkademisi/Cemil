@@ -130,25 +130,9 @@ class ChallengeEvaluationService:
                     # İlk 3 kişiyi göster
                     shown_users = participant_ids[:3]
                     
-                    # Kullanıcı isimlerini al (Canvas'ta mention'lar düzgün görünmüyor, isim kullan)
-                    user_names = []
-                    for uid in shown_users:
-                        try:
-                            if self.user_manager:
-                                user_info = self.user_manager.get_user_info(uid)
-                                # real_name veya display_name kullan
-                                name = user_info.get("real_name") or user_info.get("name", uid)
-                                # Canvas'ta @mention formatı kullan
-                                user_names.append(f"@{name}")
-                            else:
-                                # UserManager yoksa ID kullan
-                                user_names.append(f"<@{uid}>")
-                        except Exception as e:
-                            logger.debug(f"[i] Kullanıcı bilgisi alınamadı ({uid}): {e}")
-                            # Hata durumunda ID kullan
-                            user_names.append(f"<@{uid}>")
-                    
-                    user_mentions = ", ".join(user_names)
+                    # Slack Canvas'ta mention formatı: ![](@USER_ID)
+                    # Canvas markdown'ta mention'lar için özel format kullanılır
+                    user_mentions = ", ".join(f"![](@{uid})" for uid in shown_users)
                     remaining = participant_count - len(shown_users)
                     
                     if remaining > 0:
