@@ -411,6 +411,12 @@ class DatabaseClient(metaclass=SingletonMeta):
                     cursor.execute("ALTER TABLE challenge_evaluations ADD COLUMN admin_approval TEXT DEFAULT 'pending'")
                     logger.info("[+] challenge_evaluations.admin_approval kolonu eklendi.")
                 
+                # Migration: jury_status kolonu yoksa ekle
+                if 'jury_status' not in columns:
+                    logger.info("[i] challenge_evaluations tablosuna jury_status kolonu ekleniyor...")
+                    cursor.execute("ALTER TABLE challenge_evaluations ADD COLUMN jury_status TEXT DEFAULT 'recruiting'")
+                    logger.info("[+] challenge_evaluations.jury_status kolonu eklendi.")
+                
                 # Challenge Evaluators (Değerlendiriciler)
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS challenge_evaluators (
