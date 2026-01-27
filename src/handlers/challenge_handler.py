@@ -470,16 +470,34 @@ def setup_challenge_handlers(
             hub_repo = ChallengeHubRepository(db_client)
             
             # Bu kanal bir değerlendirme kanalı mı?
-            evaluation_list = eval_repo.list(filters={"evaluation_channel_id": channel_id})
-            if not evaluation_list:
+            evaluation = eval_repo.get_by_channel_id(channel_id)
+            if not evaluation:
+                # Debug: Tüm evaluation'ları kontrol et (sadece log için)
+                all_evaluations = eval_repo.list()
+                logger.warning(
+                    f"[!] Evaluation kanalı bulunamadı | "
+                    f"Channel: {channel_id} | "
+                    f"Toplam evaluation: {len(all_evaluations)}"
+                )
+                if all_evaluations:
+                    for ev in all_evaluations:
+                        ev_channel = ev.get('evaluation_channel_id')
+                        logger.debug(
+                            f"[i] Evaluation ID: {ev.get('id', '')[:8] if ev.get('id') else 'N/A'} | "
+                            f"Channel: {ev_channel} | "
+                            f"Match: {ev_channel == channel_id}"
+                        )
+                
                 chat_manager.post_ephemeral(
                     channel=channel_id,
                     user=user_id,
-                    text="❌ Bu komut sadece değerlendirme kanalında kullanılabilir."
+                    text=(
+                        "❌ Bu komut sadece değerlendirme kanalında kullanılabilir.\n\n"
+                        "💡 Eğer değerlendirme kanalındaysanız, lütfen admin ile iletişime geçin."
+                    )
                 )
                 return
             
-            evaluation = evaluation_list[0]
             evaluation_id = evaluation["id"]
             
             # Komutu parse et
