@@ -358,6 +358,95 @@ class ChallengeManager:
         conn.close()
         console.print(f"[bold green]✅ User {user_id} has been reset. They can now start/join new challenges.[/bold green]")
 
+    def clear_all_challenges(self, skip_confirm=False):
+        """
+        Tüm challenge verilerini temizler (sıfırdan başlamak için).
+        Challenge'lar, evaluations, participants, evaluators ve stats temizlenir.
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        console.print("[bold red]⚠️  UYARI: Bu işlem TÜM challenge verilerini silecektir![/bold red]")
+        console.print("[yellow]Bu işlem geri alınamaz![/yellow]")
+        
+        # Önce sayıları göster
+        try:
+            cursor.execute("SELECT COUNT(*) as count FROM challenge_hubs")
+            hub_count = cursor.fetchone()['count']
+            
+            cursor.execute("SELECT COUNT(*) as count FROM challenge_participants")
+            participant_count = cursor.fetchone()['count']
+            
+            cursor.execute("SELECT COUNT(*) as count FROM challenge_evaluations")
+            eval_count = cursor.fetchone()['count']
+            
+            cursor.execute("SELECT COUNT(*) as count FROM challenge_evaluators")
+            evaluator_count = cursor.fetchone()['count']
+            
+            cursor.execute("SELECT COUNT(*) as count FROM user_challenge_stats")
+            stats_count = cursor.fetchone()['count']
+            
+            console.print(f"\n[bold]Mevcut Veriler:[/bold]")
+            console.print(f"  📊 Challenge Hubs: {hub_count}")
+            console.print(f"  👥 Participants: {participant_count}")
+            console.print(f"  📝 Evaluations: {eval_count}")
+            console.print(f"  ⚖️  Evaluators: {evaluator_count}")
+            console.print(f"  📈 User Stats: {stats_count}")
+        except Exception as e:
+            console.print(f"[red]⚠️  Veri sayımı hatası: {e}[/red]")
+        
+        if not skip_confirm:
+            confirm = input("\n👉 Devam etmek için 'EVET' yazın: ")
+            if confirm != "EVET":
+                console.print("[yellow]❌ İşlem iptal edildi.[/yellow]")
+                conn.close()
+                return
+        
+        try:
+            # Foreign key constraint'leri geçici olarak devre dışı bırak
+            cursor.execute("PRAGMA foreign_keys = OFF")
+            
+            # Sırayla temizle (foreign key bağımlılıklarına göre)
+            tables = [
+                ("challenge_evaluators", "⚖️  Evaluators"),
+                ("challenge_evaluations", "📝 Evaluations"),
+                ("challenge_submissions", "📤 Submissions"),
+                ("challenge_participants", "👥 Participants"),
+                ("challenge_hubs", "📊 Challenge Hubs"),
+                ("user_challenge_stats", "📈 User Stats")
+            ]
+            
+            deleted_counts = {}
+            for table_name, display_name in tables:
+                try:
+                    cursor.execute(f"DELETE FROM {table_name}")
+                    count = cursor.rowcount
+                    deleted_counts[table_name] = count
+                    console.print(f"[green]✅ {display_name} temizlendi: {count} kayıt[/green]")
+                except Exception as e:
+                    console.print(f"[red]❌ {display_name} temizlenirken hata: {e}[/red]")
+                    deleted_counts[table_name] = 0
+            
+            # Foreign key constraint'leri tekrar etkinleştir
+            cursor.execute("PRAGMA foreign_keys = ON")
+            
+            conn.commit()
+            
+            total_deleted = sum(deleted_counts.values())
+            console.print(f"\n[bold green]✅ Tüm challenge verileri temizlendi![/bold green]")
+            console.print(f"[bold]Toplam silinen kayıt: {total_deleted}[/bold]")
+            
+        except Exception as e:
+            conn.rollback()
+            console.print(f"[bold red]❌ Hata: {e}[/bold red]")
+            # Hata durumunda foreign key'leri tekrar etkinleştir
+            try:
+                cursor.execute("PRAGMA foreign_keys = ON")
+            except:
+                pass
+        finally:
+            conn.close()
+
     def check_stuck_users(self):
         """Find users who might be stuck in 'active' challenges for too long."""
         conn = self.get_connection()
@@ -736,6 +825,7 @@ def interactive_menu():
         console.print("[8] 🛠️  Manual Entry (Create Form)")
         console.print("[9] 📥 Restore from JSON")
         console.print("[10] 📤 Export to JSON")
+        console.print("[11] 🧹 Clear All Challenges (Sıfırdan Başla)")
         console.print("[0] 🚪 Exit")
         
         choice = input("\n👉 Select an option: ")
@@ -816,6 +906,10 @@ def interactive_menu():
             if cid:
                 manager.export_challenge(cid)
             input("\nPress Enter to continue...")
+        
+        elif choice == "11":
+            manager.clear_all_challenges()
+            input("\nPress Enter to continue...")
                 
         elif choice == "0":
             console.print("[yellow]Bye! 👋[/yellow]")
@@ -859,6 +953,10 @@ def main():
     # Restore
     restore_parser = subparsers.add_parser("restore", help="Restore challenge from JSON")
 
+    # Clear All
+    clear_parser = subparsers.add_parser("clear-all", help="Clear all challenge data (start fresh)")
+    clear_parser.add_argument("--yes", action="store_true", help="Skip confirmation")
+
     # Eğer argüman verilmemişse interaktif moda geç
     if len(sys.argv) == 1:
         try:
@@ -885,6 +983,8 @@ def main():
         manager.export_challenge(args.id)
     elif args.command == "restore":
         manager.restore_from_json()
+    elif args.command == "clear-all":
+        manager.clear_all_challenges(skip_confirm=args.yes)
     else:
         parser.print_help()
 
