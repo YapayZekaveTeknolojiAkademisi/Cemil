@@ -217,7 +217,13 @@ class ChallengeEvaluationService:
                     text=header_text,
                     blocks=blocks,
                 )
+                
+                # Response'u detaylı logla
+                logger.debug(f"[DEBUG] Canvas post_message response: {resp}")
+                
                 ts = resp.get("ts") or (resp.get("message") or {}).get("ts")
+                message_data = resp.get("message", {})
+                
                 if ts:
                     self.hub_repo.update(
                         challenge_id,
@@ -231,14 +237,32 @@ class ChallengeEvaluationService:
                         f"Challenge: {challenge_id[:8]}... | "
                         f"Kanal: {hub_channel_id} | "
                         f"TS: {ts} | "
-                        f"Başlık: {header_text[:50]}..."
+                        f"Başlık: {header_text[:50]}... | "
+                        f"Message Type: {message_data.get('type', 'N/A')} | "
+                        f"Subtype: {message_data.get('subtype', 'N/A')}"
                     )
+                    
+                    # Mesajın Slack'te gerçekten var olup olmadığını kontrol et
+                    try:
+                        messages = self.conv.get_history(channel_id=hub_channel_id, limit=5)
+                        found = any(msg.get("ts") == ts for msg in messages)
+                        if found:
+                            logger.info(f"[✓] Canvas mesajı Slack kanalında DOĞRULANDI | TS: {ts}")
+                        else:
+                            logger.warning(
+                                f"[!] Canvas mesajı gönderildi ama kanal geçmişinde BULUNAMADI! | "
+                                f"TS: {ts} | Kanal: {hub_channel_id} | "
+                                f"Son 5 mesaj kontrol edildi"
+                            )
+                    except Exception as e:
+                        logger.warning(f"[!] Canvas mesajı doğrulama hatası: {e}")
                 else:
                     logger.error(
                         f"[X] Canvas mesajı gönderildi ama TS alınamadı! | "
                         f"Challenge: {challenge_id[:8]}... | "
                         f"Kanal: {hub_channel_id} | "
-                        f"Response: {str(resp)[:200]}"
+                        f"Response OK: {resp.get('ok', False)} | "
+                        f"Response: {str(resp)[:300]}"
                     )
             except Exception as e:
                 logger.warning(f"[!] Canvas mesajı oluşturulamadı: {e}")
