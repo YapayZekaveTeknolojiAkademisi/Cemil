@@ -475,6 +475,20 @@ class ChallengeEvaluationService:
             
             if existing_juror:
                 # VARSA -> ÇIKAR (LEAVE)
+                # Önce: Jüri ekibi tamamlanmış mı kontrol et (3 kişi zaten kanala davet edildiyse çıkamasın)
+                current_count = self.evaluator_repo.count_evaluators(evaluation_id)
+                if current_count >= 3:
+                    # Jüri ekibi tamamlanmış, artık çıkılamaz
+                    # Çünkü zaten kanala davet edilmişler ve oy verme sürecine başlamışlar
+                    return {
+                        "success": False,
+                        "message": "⚠️ Jüri ekibi tamamlandı. Artık listeden çıkamazsınız.",
+                        "action": "locked",
+                        "count": current_count,
+                        "max": 3
+                    }
+                
+                # Jüri ekibi henüz tamamlanmamış, çıkabilir
                 self.evaluator_repo.delete(existing_juror["id"])
                 logger.info(f"[-] Jüri havuzundan çıktı: {user_id} | Evaluation: {evaluation_id}")
                 
